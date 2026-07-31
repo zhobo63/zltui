@@ -9,6 +9,9 @@
 #include <csignal>
 #endif
 
+#include <thread>
+#include <mutex>
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -138,7 +141,7 @@ struct Color {
     uint8_t r = 255, g = 255, b = 255;
     uint8_t ansi = AnsiColor_None;
 
-    Color(uint8_t r, uint8_t g, uint8_t b) :r(r), g(g), b(b) {}
+    Color(uint8_t r, uint8_t g, uint8_t b) :r(r), g(g), b(b), ansi(AnsiColor_None) {}
     Color(AnsiColor_ ansi) :ansi(ansi) {}
     Color() {}
 
@@ -149,6 +152,8 @@ struct Color {
     inline bool operator!=(const Color& o) const {
         return !operator==(o);
     }
+
+    static const Color TRACK;
 };
 
 struct Char {
@@ -176,7 +181,7 @@ struct Text {
 };
 
 struct Cell {
-    std::string content = "";
+    std::string content = " ";
     int size = 1;
     Color fg_color = { AnsiColor_Fg_White };
     Color bg_color = { AnsiColor_Bg_Black };
@@ -192,6 +197,7 @@ struct Cell {
 
 enum BorderStyle_
 {
+    BorderStyle_None,
     BorderStyle_Single,
     BorderStyle_Double,
     BorderStyle_Round,
@@ -203,13 +209,11 @@ struct DrawBuffer {
     int width_ = 0;
     int height_ = 0;
 
-    Color fg_color = { AnsiColor_Fg_White };
-    Color bg_color = { AnsiColor_Bg_Black };
-
     void resize(int w, int h);
     void clear();
-    void Text(const std::string& text, const Point& pos, const Color& color);    
-    void Border(const Rect& r, const Color& color, const Color& bgcolor, BorderStyle_ style = BorderStyle_Round);
+    void Text(const std::string& text, const Point& pos, const Color& color = AnsiColor_Fg_White, bool bold = false, bool italic = false, bool underline = false);
+    void Border(const Rect& r, const Color& bgcolor, BorderStyle_ style = BorderStyle_Round, const Color& color = AnsiColor_Bright_White);
+    void ScrollBar(const Point& pos, int length, int offset, int content_length, bool vertical, const Color& track_color = AnsiColor_BrightBg_Black, const Color& thumb_color = AnsiColor_BrightBg_White);
 };
 
 std::string CursorMove(int x, int y);
@@ -239,6 +243,12 @@ private:
 #else
     struct termios originalTermios_;
 #endif
+
+    /// Whether the watcher thread should keep running.
+    static std::atomic<bool> s_running;
+    static std::thread* s_event_thread;
+    static std::mutex   s_event_mutex;
+    static void event_thread();
 };
 
 NAMESPACE_END

@@ -1,6 +1,9 @@
 ﻿#include "zltui.h"
 #include <iostream>
 
+#undef max
+#undef min
+
 NAMESPACE_BEGIN(TUI)
 
 /// Compute the display width of a single UTF-8 character (codepoint).
@@ -49,13 +52,15 @@ static int utf8_mbtowc(uint32_t& cp, const uint8_t* s, int len)
     }else {
         cp=c;
         return 1;
-    }    
+    }
 }
 
 std::string CursorMove(int x, int y)
 {
     return "\033[" + std::to_string(y + 1) + ";" + std::to_string(x + 1) + "H";
 }
+
+const Color Color::TRACK(46, 46, 46);
 
 std::string Color::toAnsi() const
 {
@@ -146,17 +151,17 @@ void DrawBuffer::resize(int w, int h)
     width_ = w;
     height_ = h;
     cells_.resize(w * h);
+    clear();
 }
 
 void DrawBuffer::clear()
 {
     for (auto& cell : cells_) {
-        cell.content = " ";
-        cell.size = 1;
+        cell = {};
     }
 }
 
-void DrawBuffer::Text(const std::string& text, const Point& pos, const Color& color)
+void DrawBuffer::Text(const std::string& text, const Point& pos, const Color& color, bool bold, bool italic, bool underline)
 {
     // skip if position is already out of bounds
     if (pos.x < 0 || pos.y < 0 || pos.y >= height_) return;
@@ -182,6 +187,9 @@ void DrawBuffer::Text(const std::string& text, const Point& pos, const Color& co
         auto& cell = cells_[px + cw];
         cell.fg_color = color;
         cell.size = char_width;
+        cell.bold = bold;
+        cell.italic = italic;
+        cell.underline = underline;
         cell.content = std::string((const char*)p, (size_t)n);
         if (cell.size > 1) {
             cells_[px + cw + 1].content = "";
@@ -191,45 +199,148 @@ void DrawBuffer::Text(const std::string& text, const Point& pos, const Color& co
     }
 }
 
-void DrawBuffer::Border(const Rect& r, const Color& color, const Color& bgcolor, BorderStyle_ style)
+void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style, const Color& color)
 {
     std::string h_line, v_line, tl, tr, bl, br;
     switch (style) {
+    case BorderStyle_None:
+
+        break;
     case BorderStyle_Single:
-        h_line = "\u2500";
-        v_line = "\u2502";
-        tl = "\u250C";
-        tr = "\u2510";
-        bl = "\u2514";
-        br = "\u2518";
+        h_line = u8"\u2500";
+        v_line = u8"\u2502";
+        tl = u8"\u250C";
+        tr = u8"\u2510";
+        bl = u8"\u2514";
+        br = u8"\u2518";
         break;
     case BorderStyle_Double:
-        h_line = "\u2550";
-        v_line = "\u2551";
-        tl = "\u2554";
-        tr = "\u2557";
-        bl = "\u255A";
-        br = "\u255D";
+        h_line = u8"\u2550";
+        v_line = u8"\u2551";
+        tl = u8"\u2554";
+        tr = u8"\u2557";
+        bl = u8"\u255A";
+        br = u8"\u255D";
         break;
     case BorderStyle_Round:
-        h_line = "\u2500";
-        v_line = "\u2502";
-        tl = "\u256D";
-        tr = "\u256E";
-        bl = "\u2570";
-        br = "\u256F";
+        h_line = u8"\u2500";
+        v_line = u8"\u2502";
+        tl = u8"\u256D";
+        tr = u8"\u256E";
+        bl = u8"\u2570";
+        br = u8"\u256F";
         break;
     }
-    for (int y = r.y; y < r.y2; y++) {
-        for (int x = r.x; x < r.x2; x++) {
-        
+    if (style != BorderStyle_None) {
+        // Draw top-left corner
+        if (r.x >= 0 && r.y >= 0) {
+            auto& cell = cells_[r.y * width_ + r.x];
+            cell.content = tl;
+            cell.fg_color = color;
+            cell.bg_color = bgcolor;
+        }
+        // Draw top-right corner
+        if (r.x2 >= 0 && r.y >= 0) {
+            auto& cell = cells_[r.y * width_ + r.x2];
+            cell.content = tr;
+            cell.fg_color = color;
+            cell.bg_color = bgcolor;
+        }
+        // Draw bottom-left corner
+        if (r.x >= 0 && r.y2 >= 0) {
+            auto& cell = cells_[r.y2 * width_ + r.x];
+            cell.content = bl;
+            cell.fg_color = color;
+            cell.bg_color = bgcolor;
+        }
+        // Draw bottom-right corner
+        if (r.x2 >= 0 && r.y2 >= 0) {
+            auto& cell = cells_[r.y2 * width_ + r.x2];
+            cell.content = br;
+            cell.fg_color = color;
+            cell.bg_color = bgcolor;
+        }
+
+        // Draw top and bottom horizontal lines (excluding corners)
+        for (int x = r.x + 1; x < r.x2; x++) {
+            if (x >= 0 && r.y >= 0) {
+                auto& cell = cells_[r.y * width_ + x];
+                cell.content = h_line;
+                cell.fg_color = color;
+                cell.bg_color = bgcolor;
+            }
+            if (x >= 0 && r.y2 >= 0) {
+                auto& cell = cells_[r.y2 * width_ + x];
+                cell.content = h_line;
+                cell.fg_color = color;
+                cell.bg_color = bgcolor;
+            }
+        }
+
+        // Draw left and right vertical lines (excluding corners)
+        for (int y = r.y + 1; y < r.y2; y++) {
+            if (r.x >= 0 && y >= 0) {
+                auto& cell = cells_[y * width_ + r.x];
+                cell.content = v_line;
+                cell.fg_color = color;
+                cell.bg_color = bgcolor;
+            }
+            if (r.x2 >= 0 && y >= 0) {
+                auto& cell = cells_[y * width_ + r.x2];
+                cell.content = v_line;
+                cell.fg_color = color;
+                cell.bg_color = bgcolor;
+            }
+        }
+    }
+    // Fill with background: entire rect for None, interior only otherwise
+    int fill_y_start = (style == BorderStyle_None) ? r.y : r.y + 1;
+    int fill_x_start = (style == BorderStyle_None) ? r.x : r.x + 1;
+    int fill_y_end   = (style == BorderStyle_None) ? r.y2 : r.y2 - 1;
+    int fill_x_end   = (style == BorderStyle_None) ? r.x2 : r.x2 - 1;
+    for (int y = fill_y_start; y <= fill_y_end; y++) {
+        for (int x = fill_x_start; x <= fill_x_end; x++) {
+            if (x >= 0 && y >= 0) {
+                auto& cell = cells_[y * width_ + x];
+                cell.content = " ";
+                cell.bg_color = bgcolor;
+            }
         }
     }
 }
 
+void DrawBuffer::ScrollBar(const Point& pos, int length, int offset, int content_length, bool vertical, const Color& track_color, const Color& thumb_color)
+{
+    int max_scroll = content_length - length;
+    int thumb_size = std::max(1, length * length / content_length);
+    int thumb_pos = (int)((float)offset / max_scroll * (length - thumb_size));
+
+    for (int i = 0; i < length; ++i) {
+        bool is_thumb = (i >= thumb_pos && i < thumb_pos + thumb_size);
+        if (vertical) {
+            auto& cell = cells_[(pos.y + i) * width_ + pos.x];
+            cell.content = " ";
+            cell.bg_color = is_thumb ? thumb_color : track_color;
+        }
+        else {
+            auto& cell = cells_[pos.y * width_ + pos.x + i];
+            cell.content = " ";
+            cell.bg_color = is_thumb ? thumb_color : track_color;
+        }
+    }
+}
+
+/// <summary>
+/// Terminal
+/// </summary>
+
+std::atomic<bool> Terminal::s_running = false;
+std::thread* Terminal::s_event_thread = nullptr;
+std::mutex   Terminal::s_event_mutex;
+
 Terminal::Terminal()
-{ 
-    EnableRawMode(); 
+{
+    EnableRawMode();
     auto size = GetSize();
     drawbuffers[0].resize(size.x, size.y);
     drawbuffers[1].resize(size.x, size.y);
@@ -386,11 +497,24 @@ void Terminal::EnableRawMode()
     SetConsoleCP(CP_UTF8);
 
     std::cout << "\033[?1049h" << HIDE_CURSOR;
+
+    if (!s_event_thread) {
+        s_running.store(true);
+        s_event_thread = new std::thread([] {
+            event_thread();
+            });
+    }
 }
 
 void Terminal::DisableRawMode()
 {
-    std::cout << SHOW_CURSOR;         
+    if (s_event_thread) {
+        s_running.store(false);
+        s_event_thread->join();
+        delete s_event_thread;
+        s_event_thread = nullptr;
+    }
+    std::cout << SHOW_CURSOR;
     std::cout << "\033[?1049l";  // Disable alternate screen buffer
 
     if (vtSupported_) {
@@ -412,7 +536,23 @@ Point Terminal::GetSize()
             csbi.srWindow.Bottom - csbi.srWindow.Top + 1 };
 }
 
-#else 
+void Terminal::event_thread()
+{
+    INPUT_RECORD rec;
+    DWORD count;
+    HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+
+    while (s_running.load()) {
+        ReadConsoleInputW(hIn, &rec, 1, &count);
+        if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown) {
+        }
+        else if (rec.EventType == MOUSE_EVENT) {
+        
+        }
+    }
+}
+
+#else
 
 void Terminal::EnableRawMode()
 {
@@ -451,6 +591,11 @@ Point Terminal::GetSize()
     struct winsize w;
     ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
     return { w.ws_col, w.ws_row };
+}
+
+void Terminal::event_thread()
+{
+
 }
 
 #endif

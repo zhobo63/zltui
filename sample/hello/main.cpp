@@ -26,14 +26,19 @@ int main()
 
         auto& buf = terminal.GetDrawBuffer();
         buf.clear();
-        buf.bg_color.ansi = TUI::AnsiColor_Bg_Black;
+
+        buf.Border({ 1,0,5,5 }, TUI::AnsiColor_Bg_Green);
+        buf.Border({ 10,1,40,10 }, TUI::AnsiColor_Bg_Magenta, TUI::BorderStyle_Single);
+        buf.Border({ 41,1,60,10 }, TUI::AnsiColor_Bg_Magenta, TUI::BorderStyle_Double);
+        buf.Border({ 61,1,80,10 }, TUI::AnsiColor_BrightBg_Magenta, TUI::BorderStyle_None);
+        buf.ScrollBar({ size.x - 1, 0 }, size.y - 1, 50, 100, true);
+
         buf.Text("hello", pos, col);
 
-        buf.bg_color.ansi = TUI::AnsiColor_Bg_Blue;
-        buf.Text("hello", { 10,10 }, { TUI::AnsiColor_Fg_White });
+        buf.Text("hello", { 10,10 }, TUI::AnsiColor_Fg_White, true);
 
         terminal.Render();
-        Sleep(100);
+        Sleep(10);
     }
     return 0;
 }
