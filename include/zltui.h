@@ -146,12 +146,8 @@ struct Color {
     Color() {}
 
     std::string toAnsi() const;
-    inline bool operator==(const Color& o) const {
-        return r == o.r && g == o.g && b == o.b && ansi == o.ansi;
-    }
-    inline bool operator!=(const Color& o) const {
-        return !operator==(o);
-    }
+    inline bool operator==(const Color& o) const { return r == o.r && g == o.g && b == o.b && ansi == o.ansi; }
+    inline bool operator!=(const Color& o) const { return !operator==(o); }
 
     static const Color TRACK;
 };
