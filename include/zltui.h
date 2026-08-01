@@ -83,17 +83,15 @@ static constexpr const char* HIDE_CURSOR = "\033[?25l";
 enum AnsiColor_ : uint8_t {
     AnsiColor_None = 0,
 
-    // Foreground colors
-    AnsiColor_Fg_Black,
-    AnsiColor_Fg_Red,
-    AnsiColor_Fg_Green,
-    AnsiColor_Fg_Yellow,
-    AnsiColor_Fg_Blue,
-    AnsiColor_Fg_Magenta,
-    AnsiColor_Fg_Cyan,
-    AnsiColor_Fg_White,
+    AnsiColor_Black,
+    AnsiColor_Red,
+    AnsiColor_Green,
+    AnsiColor_Yellow,
+    AnsiColor_Blue,
+    AnsiColor_Magenta,
+    AnsiColor_Cyan,
+    AnsiColor_White,
 
-    // Bright foreground colors
     AnsiColor_Bright_Black,
     AnsiColor_Bright_Red,
     AnsiColor_Bright_Green,
@@ -103,30 +101,13 @@ enum AnsiColor_ : uint8_t {
     AnsiColor_Bright_Cyan,
     AnsiColor_Bright_White,
 
-    // Background colors
-    AnsiColor_Bg_Black,
-    AnsiColor_Bg_Red,
-    AnsiColor_Bg_Green,
-    AnsiColor_Bg_Yellow,
-    AnsiColor_Bg_Blue,
-    AnsiColor_Bg_Magenta,
-    AnsiColor_Bg_Cyan,
-    AnsiColor_Bg_White,
-
-    // Bright background colors
-    AnsiColor_BrightBg_Black,
-    AnsiColor_BrightBg_Red,
-    AnsiColor_BrightBg_Green,
-    AnsiColor_BrightBg_Yellow,
-    AnsiColor_BrightBg_Blue,
-    AnsiColor_BrightBg_Magenta,
-    AnsiColor_BrightBg_Cyan,
-    AnsiColor_BrightBg_White,
     AnsiColor_Max,
 };
 
 struct Point {
     int x = 0, y = 0;
+
+    void set(int _x, int _y) { x = _x; y = _y; }
 };
 
 struct Rect {
@@ -135,6 +116,9 @@ struct Rect {
 
     int width() const { return x2 - x; }
     int height() const { return y2 - y; }
+    void set(int _x, int _y, int _x2, int _y2) { x = _x; y = _y; x2 = _x2; y2 = _y2; }
+    Rect move(int ox, int oy) { return { x + ox, y + oy, x2 + ox, y2 + oy }; }
+    Rect expand(int ox, int oy) { return { x - ox, y - oy, x2 + ox, y2 + oy }; }
 };
 
 struct Color {
@@ -145,11 +129,13 @@ struct Color {
     Color(AnsiColor_ ansi) :ansi(ansi) {}
     Color() {}
 
-    std::string toAnsi() const;
+    std::string toAnsi(bool fg) const;
     inline bool operator==(const Color& o) const { return r == o.r && g == o.g && b == o.b && ansi == o.ansi; }
     inline bool operator!=(const Color& o) const { return !operator==(o); }
-
+    
+    static Color Parse(const std::string& param);
     static const Color TRACK;
+    static const Color THUMB;
 };
 
 struct Char {
@@ -167,8 +153,7 @@ struct Text {
     std::string text;
     std::vector<Char> chars;
 
-    Color fg_color = { AnsiColor_Fg_White };
-    Color bg_color = { AnsiColor_Bg_Black };
+    Color fg_color = { AnsiColor_White };
     bool bold = false;
     bool italic = false;
     bool underline = false;
@@ -179,8 +164,8 @@ struct Text {
 struct Cell {
     std::string content = " ";
     int size = 1;
-    Color fg_color = { AnsiColor_Fg_White };
-    Color bg_color = { AnsiColor_Bg_Black };
+    Color fg_color = { AnsiColor_White };
+    Color bg_color = { AnsiColor_Black };
     bool bold = false;       
     bool italic = false;     
     bool underline = false;  
@@ -199,20 +184,50 @@ enum BorderStyle_
     BorderStyle_Round,
 };
 
+BorderStyle_ ParseBorderStyle(const std::string& param);
+
 struct DrawBuffer {
     std::vector<Cell> cells_;
+    std::vector<Rect> clips_;
 
     int width_ = 0;
     int height_ = 0;
 
+    void PushClip(const Rect& clip);
+    void PopClip();
+
     void resize(int w, int h);
     void clear();
-    void Text(const std::string& text, const Point& pos, const Color& color = AnsiColor_Fg_White, bool bold = false, bool italic = false, bool underline = false);
+    void Text(const std::string& text, const Point& pos, const Color& color = AnsiColor_White, bool bold = false, bool italic = false, bool underline = false);
+    void Text(const Point& pos, const TUI::Text& text);
     void Border(const Rect& r, const Color& bgcolor, BorderStyle_ style = BorderStyle_Round, const Color& color = AnsiColor_Bright_White);
-    void ScrollBar(const Point& pos, int length, int offset, int content_length, bool vertical, const Color& track_color = AnsiColor_BrightBg_Black, const Color& thumb_color = AnsiColor_BrightBg_White);
+    void ScrollBar(const Point& pos, int length, int offset, int content_length, bool vertical, const Color& track_color = Color::TRACK, const Color& thumb_color = Color::THUMB);
 };
 
 std::string CursorMove(int x, int y);
+
+enum EventType_
+{
+    EventType_None,
+    EventType_Key,
+    EventType_Mouse,
+    EventType_Paste,
+};
+
+struct Event
+{
+    EventType_ type = EventType_None;
+    uint32_t key = 0;
+    int button = 0;
+    int x = 0;
+    int y = 0;
+    int clicks = 0;
+    std::string paste_text;
+
+    bool shift = false;
+    bool ctrl = false;
+    bool alt = false;
+};
 
 class Terminal
 {
@@ -244,7 +259,85 @@ private:
     static std::atomic<bool> s_running;
     static std::thread* s_event_thread;
     static std::mutex   s_event_mutex;
+    static std::vector<Event> s_events;
     static void event_thread();
+};
+
+struct EditLine {
+    std::vector<std::string> lines;
+    int current = -1;
+    int tok_ = 0;
+
+    /// Read from file — uses split_lines semantics.
+    bool read_file(const std::string& path);
+
+    /// Parse text into lines (e.g. new_text input). Uses split_lines.
+    void parse(const std::string& text);
+
+    std::string next_line();
+    std::string next_tok(std::string delims = " \t");
+    std::string tok(std::string delims = " \t");
+    int tok_int(std::string delims = " \t");
+    bool tok_bool(std::string delims = " \t");
+};
+
+struct Mgr;
+struct Win;
+using WinPtr = std::shared_ptr<Win>;
+
+struct Win
+{
+    Win(Mgr* mgr) : mgr(mgr) {}
+
+    virtual bool Parse(EditLine& el);
+    virtual bool ParseCmd(const std::string& cmd, EditLine& el);
+    virtual void CalRect(Win* parent);
+    virtual void Paint(DrawBuffer& drawbuf);
+    virtual void PaintChild(DrawBuffer& drawbuf);
+
+    std::string name = "";
+    bool is_visible = true;
+    bool draw_border = false;
+    BorderStyle_ border_style = BorderStyle_Round;
+    Color bg_color = Color(30, 30, 30);
+    Color fg_color = AnsiColor_White;
+
+    Rect local;
+    Rect screen;
+    Rect clip;
+
+    std::vector<WinPtr> child;
+
+    Mgr* mgr = nullptr;
+};
+
+struct Button : Win
+{
+    Button(Mgr* mgr) :Win(mgr) {}
+
+    Color bg_color_hover = Color(50, 50, 50);
+    Color bg_color_down = Color(70, 70, 70);
+};
+
+struct Slider : Win
+{
+    Slider(Mgr* mgr) :Win(mgr) {}
+
+    bool is_vertical = true;
+    int scroll_value = 0;
+};
+
+struct Edit : Slider
+{
+    Edit(Mgr* mgr) :Slider(mgr) {}
+};
+
+struct Mgr : Win
+{
+    Mgr() :Win(this) { draw_border = false; }
+    WinPtr Create(std::string csid);
+    bool Parse(std::string content);
+    void Paint(DrawBuffer& drawbuf) override;
 };
 
 NAMESPACE_END

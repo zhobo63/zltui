@@ -1,5 +1,7 @@
 ﻿#include "zltui.h"
 #include <iostream>
+#include <fstream>
+#include <sstream>
 
 #undef max
 #undef min
@@ -55,60 +57,95 @@ static int utf8_mbtowc(uint32_t& cp, const uint8_t* s, int len)
     }
 }
 
+static bool eqi(const std::string& a, const char* b)
+{
+    for (size_t i = 0; a[i] && b[i]; ++i)
+        if (std::tolower(a[i]) != std::tolower(b[i]))
+            return false;
+    return a.size() == strlen(b);
+}
+
 std::string CursorMove(int x, int y)
 {
     return "\033[" + std::to_string(y + 1) + ";" + std::to_string(x + 1) + "H";
 }
 
-const Color Color::TRACK(46, 46, 46);
+const Color Color::TRACK(44, 44, 44);
+const Color Color::THUMB(159, 159, 159);
 
-std::string Color::toAnsi() const
+std::string Color::toAnsi(bool fg) const
 {
     if (ansi == AnsiColor_None) {
-        return "\033[38;2;" + std::to_string(r) + ";" +
-               std::to_string(g) + ";" +
-               std::to_string(b) + "m";
+        return "\033[" + std::string(fg ? "38" : "48") + ";2;" + std::to_string(r) + ";" +
+            std::to_string(g) + ";" +
+            std::to_string(b) + "m";
     }
 
     switch (ansi) {
-        case AnsiColor_Fg_Black:     return ANSI_FG_BLACK;
-        case AnsiColor_Fg_Red:       return ANSI_FG_RED;
-        case AnsiColor_Fg_Green:     return ANSI_FG_GREEN;
-        case AnsiColor_Fg_Yellow:    return ANSI_FG_YELLOW;
-        case AnsiColor_Fg_Blue:      return ANSI_FG_BLUE;
-        case AnsiColor_Fg_Magenta:   return ANSI_FG_MAGENTA;
-        case AnsiColor_Fg_Cyan:      return ANSI_FG_CYAN;
-        case AnsiColor_Fg_White:     return ANSI_FG_WHITE;
+    case AnsiColor_Black:     return fg ? ANSI_FG_BLACK : ANSI_BG_BLACK;
+    case AnsiColor_Red:       return fg ? ANSI_FG_RED : ANSI_BG_RED;
+    case AnsiColor_Green:     return fg ? ANSI_FG_GREEN : ANSI_BG_GREEN;
+    case AnsiColor_Yellow:    return fg ? ANSI_FG_YELLOW : ANSI_BG_YELLOW;
+    case AnsiColor_Blue:      return fg ? ANSI_FG_BLUE : ANSI_BG_BLUE;
+    case AnsiColor_Magenta:   return fg ? ANSI_FG_MAGENTA : ANSI_BG_MAGENTA;
+    case AnsiColor_Cyan:      return fg ? ANSI_FG_CYAN : ANSI_BG_CYAN;
+    case AnsiColor_White:     return fg ? ANSI_FG_WHITE : ANSI_BG_WHITE;
 
-        case AnsiColor_Bright_Black:     return ANSI_BRIGHT_BLACK;
-        case AnsiColor_Bright_Red:       return ANSI_BRIGHT_RED;
-        case AnsiColor_Bright_Green:     return ANSI_BRIGHT_GREEN;
-        case AnsiColor_Bright_Yellow:    return ANSI_BRIGHT_YELLOW;
-        case AnsiColor_Bright_Blue:      return ANSI_BRIGHT_BLUE;
-        case AnsiColor_Bright_Magenta:   return ANSI_BRIGHT_MAGENTA;
-        case AnsiColor_Bright_Cyan:      return ANSI_BRIGHT_CYAN;
-        case AnsiColor_Bright_White:     return ANSI_BRIGHT_WHITE;
+    case AnsiColor_Bright_Black:     return fg ? ANSI_BRIGHT_BLACK : ANSI_BRIGHT_BG_BLACK;
+    case AnsiColor_Bright_Red:       return fg ? ANSI_BRIGHT_RED : ANSI_BRIGHT_BG_RED;
+    case AnsiColor_Bright_Green:     return fg ? ANSI_BRIGHT_GREEN : ANSI_BRIGHT_BG_GREEN;
+    case AnsiColor_Bright_Yellow:    return fg ? ANSI_BRIGHT_YELLOW : ANSI_BRIGHT_BG_YELLOW;
+    case AnsiColor_Bright_Blue:      return fg ? ANSI_BRIGHT_BLUE : ANSI_BRIGHT_BG_BLUE;
+    case AnsiColor_Bright_Magenta:   return fg ? ANSI_BRIGHT_MAGENTA : ANSI_BRIGHT_BG_MAGENTA;
+    case AnsiColor_Bright_Cyan:      return fg ? ANSI_BRIGHT_CYAN : ANSI_BRIGHT_BG_CYAN;
+    case AnsiColor_Bright_White:     return fg ? ANSI_BRIGHT_WHITE : ANSI_BRIGHT_BG_WHITE;
 
-        case AnsiColor_Bg_Black:       return ANSI_BG_BLACK;
-        case AnsiColor_Bg_Red:         return ANSI_BG_RED;
-        case AnsiColor_Bg_Green:       return ANSI_BG_GREEN;
-        case AnsiColor_Bg_Yellow:      return ANSI_BG_YELLOW;
-        case AnsiColor_Bg_Blue:        return ANSI_BG_BLUE;
-        case AnsiColor_Bg_Magenta:     return ANSI_BG_MAGENTA;
-        case AnsiColor_Bg_Cyan:        return ANSI_BG_CYAN;
-        case AnsiColor_Bg_White:       return ANSI_BG_WHITE;
-
-        case AnsiColor_BrightBg_Black:    return ANSI_BRIGHT_BG_BLACK;
-        case AnsiColor_BrightBg_Red:      return ANSI_BRIGHT_BG_RED;
-        case AnsiColor_BrightBg_Green:    return ANSI_BRIGHT_BG_GREEN;
-        case AnsiColor_BrightBg_Yellow:   return ANSI_BRIGHT_BG_YELLOW;
-        case AnsiColor_BrightBg_Blue:     return ANSI_BRIGHT_BG_BLUE;
-        case AnsiColor_BrightBg_Magenta:  return ANSI_BRIGHT_BG_MAGENTA;
-        case AnsiColor_BrightBg_Cyan:     return ANSI_BRIGHT_BG_CYAN;
-        case AnsiColor_BrightBg_White:    return ANSI_BRIGHT_BG_WHITE;
-
-        default: return "";
+    default: return "";
     }
+}
+
+Color Color::Parse(const std::string& param)
+{
+    static const struct { const char* name; AnsiColor_ val; } names[] = {
+        {"Black",         AnsiColor_Black},
+        {"Red",           AnsiColor_Red},
+        {"Green",         AnsiColor_Green},
+        {"Yellow",        AnsiColor_Yellow},
+        {"Blue",          AnsiColor_Blue},
+        {"Magenta",       AnsiColor_Magenta},
+        {"Cyan",          AnsiColor_Cyan},
+        {"White",         AnsiColor_White},
+        {"BrightBlack",   AnsiColor_Bright_Black},
+        {"BrightRed",     AnsiColor_Bright_Red},
+        {"BrightGreen",   AnsiColor_Bright_Green},
+        {"BrightYellow",  AnsiColor_Bright_Yellow},
+        {"BrightBlue",    AnsiColor_Bright_Blue},
+        {"BrightMagenta", AnsiColor_Bright_Magenta},
+        {"BrightCyan",    AnsiColor_Bright_Cyan},
+        {"BrightWhite",   AnsiColor_Bright_White},
+    };
+
+    for (auto& n : names) {
+        if (eqi(param, n.name))
+            return Color(n.val);
+    }
+
+    // "RGB(r, g, b)"
+    if (eqi(param.substr(0, 3), "rgb")) {
+        size_t lp = param.find('(');
+        size_t rp = param.rfind(')');
+        if (lp != std::string::npos && rp != std::string::npos && rp > lp) {
+            std::string inner = param.substr(lp + 1, rp - lp - 1);
+            EditLine el;
+            el.lines.push_back(inner);
+            uint8_t r = static_cast<uint8_t>(el.tok_int(","));
+            uint8_t g = static_cast<uint8_t>(el.tok_int(","));
+            uint8_t b = static_cast<uint8_t>(el.tok_int(","));
+            return Color(r, g, b);
+        }
+    }
+
+    return Color();
 }
 
 Char Char::from_code(uint32_t cp)
@@ -146,6 +183,24 @@ void Text::setText(const std::string& _text)
     }
 }
 
+BorderStyle_ ParseBorderStyle(const std::string& param)
+{
+    if (eqi(param, "None"))   return BorderStyle_None;
+    if (eqi(param, "Single")) return BorderStyle_Single;
+    if (eqi(param, "Double")) return BorderStyle_Double;
+    if (eqi(param, "Round"))  return BorderStyle_Round;
+    return BorderStyle_None;
+}
+
+void DrawBuffer::PushClip(const Rect& clip)
+{
+    clips_.push_back(clip);
+}
+void DrawBuffer::PopClip()
+{
+    clips_.pop_back();
+}
+
 void DrawBuffer::resize(int w, int h)
 {
     width_ = w;
@@ -163,44 +218,80 @@ void DrawBuffer::clear()
 
 void DrawBuffer::Text(const std::string& text, const Point& pos, const Color& color, bool bold, bool italic, bool underline)
 {
-    // skip if position is already out of bounds
-    if (pos.x < 0 || pos.y < 0 || pos.y >= height_) return;
-
-    int px = pos.y * width_ + pos.x;
-    int cw = 0;
+    int cur_x = pos.x;
+    int cur_y = pos.y;
 
     const uint8_t* p = reinterpret_cast<const uint8_t*>(text.data());
     size_t len = text.size();
+
     while (len > 0) {
-        // boundary check: stop if we've gone past the row end
-        if (pos.x + cw >= width_) break;
+        // skip if out of bounds
+        if (cur_x < 0 || cur_y < 0 || cur_y >= height_) break;
 
-        uint32_t cp = 0;
-        int n = utf8_mbtowc(cp, p, static_cast<int>(len));
-        if (n <= 0) break;
-
-        int char_width = utf8_char_width(cp);
-
-        // skip wide characters that would overflow the row edge
-        if (pos.x + cw + char_width > width_) break;
-
-        auto& cell = cells_[px + cw];
-        cell.fg_color = color;
-        cell.size = char_width;
-        cell.bold = bold;
-        cell.italic = italic;
-        cell.underline = underline;
-        cell.content = std::string((const char*)p, (size_t)n);
-        if (cell.size > 1) {
-            cells_[px + cw + 1].content = "";
+        int right = width_;
+        if (!clips_.empty()) {
+            const auto& clip = clips_.back();
+            if (cur_y < clip.y || cur_y > clip.y2)
+                break;
+            if (clip.x2 < right)
+                right = clip.x2;
         }
-        cw += cell.size;
-        p += n; len -= n;
+
+        int px = cur_y * width_ + cur_x;
+        int cw = 0;
+
+        while (len > 0 && cur_x + cw < right) {
+            uint32_t cp = 0;
+            int n = utf8_mbtowc(cp, p, static_cast<int>(len));
+            if (n <= 0) break;
+
+            // newline: move to next row
+            if (cp == '\n') {
+                cur_y++;
+                cur_x = pos.x;
+                p += n; len -= n;
+                break;
+            }
+
+            int char_width = utf8_char_width(cp);
+            if (cur_x + cw + char_width > right) break;
+
+            auto& cell = cells_[px + cw];
+            cell.fg_color = color;
+            cell.size = char_width;
+            cell.bold = bold;
+            cell.italic = italic;
+            cell.underline = underline;
+            cell.content = std::string((const char*)p, (size_t)n);
+            if (cell.size > 1) {
+                cells_[px + cw + 1].content = "";
+            }
+            cw += cell.size;
+            p += n; len -= n;
+        }
     }
+}
+
+void DrawBuffer::Text(const Point& pos, const TUI::Text& text)
+{
+    Text(text.text, pos, text.fg_color, text.bold, text.italic, text.underline);
 }
 
 void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style, const Color& color)
 {
+    // Apply clip region
+    int clip_x = 0;
+    int clip_y = 0;
+    int clip_x2 = width_ - 1;
+    int clip_y2 = height_ - 1;
+    if (!clips_.empty()) {
+        const auto& clip = clips_.back();
+        clip_x = clip.x;
+        clip_y = clip.y;
+        clip_x2 = clip.x2;
+        clip_y2 = clip.y2;
+    }
+
     std::string h_line, v_line, tl, tr, bl, br;
     switch (style) {
     case BorderStyle_None:
@@ -233,28 +324,28 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
     }
     if (style != BorderStyle_None) {
         // Draw top-left corner
-        if (r.x >= 0 && r.y >= 0) {
+        if (r.x >= clip_x && r.x <= clip_x2 && r.y >= clip_y && r.y <= clip_y2) {
             auto& cell = cells_[r.y * width_ + r.x];
             cell.content = tl;
             cell.fg_color = color;
             cell.bg_color = bgcolor;
         }
         // Draw top-right corner
-        if (r.x2 >= 0 && r.y >= 0) {
+        if (r.x2 >= clip_x && r.x2 <= clip_x2 && r.y >= clip_y && r.y <= clip_y2) {
             auto& cell = cells_[r.y * width_ + r.x2];
             cell.content = tr;
             cell.fg_color = color;
             cell.bg_color = bgcolor;
         }
         // Draw bottom-left corner
-        if (r.x >= 0 && r.y2 >= 0) {
+        if (r.x >= clip_x && r.x <= clip_x2 && r.y2 >= clip_y && r.y2 <= clip_y2) {
             auto& cell = cells_[r.y2 * width_ + r.x];
             cell.content = bl;
             cell.fg_color = color;
             cell.bg_color = bgcolor;
         }
         // Draw bottom-right corner
-        if (r.x2 >= 0 && r.y2 >= 0) {
+        if (r.x2 >= clip_x && r.x2 <= clip_x2 && r.y2 >= clip_y && r.y2 <= clip_y2) {
             auto& cell = cells_[r.y2 * width_ + r.x2];
             cell.content = br;
             cell.fg_color = color;
@@ -262,14 +353,14 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
         }
 
         // Draw top and bottom horizontal lines (excluding corners)
-        for (int x = r.x + 1; x < r.x2; x++) {
-            if (x >= 0 && r.y >= 0) {
+        for (int x = std::max(r.x + 1, clip_x); x < r.x2 && x <= clip_x2; x++) {
+            if (r.y >= clip_y && r.y <= clip_y2) {
                 auto& cell = cells_[r.y * width_ + x];
                 cell.content = h_line;
                 cell.fg_color = color;
                 cell.bg_color = bgcolor;
             }
-            if (x >= 0 && r.y2 >= 0) {
+            if (r.y2 >= clip_y && r.y2 <= clip_y2) {
                 auto& cell = cells_[r.y2 * width_ + x];
                 cell.content = h_line;
                 cell.fg_color = color;
@@ -278,14 +369,14 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
         }
 
         // Draw left and right vertical lines (excluding corners)
-        for (int y = r.y + 1; y < r.y2; y++) {
-            if (r.x >= 0 && y >= 0) {
+        for (int y = std::max(r.y + 1, clip_y); y < r.y2 && y <= clip_y2; y++) {
+            if (r.x >= clip_x && r.x <= clip_x2) {
                 auto& cell = cells_[y * width_ + r.x];
                 cell.content = v_line;
                 cell.fg_color = color;
                 cell.bg_color = bgcolor;
             }
-            if (r.x2 >= 0 && y >= 0) {
+            if (r.x2 >= clip_x && r.x2 <= clip_x2) {
                 auto& cell = cells_[y * width_ + r.x2];
                 cell.content = v_line;
                 cell.fg_color = color;
@@ -298,13 +389,11 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
     int fill_x_start = (style == BorderStyle_None) ? r.x : r.x + 1;
     int fill_y_end   = (style == BorderStyle_None) ? r.y2 : r.y2 - 1;
     int fill_x_end   = (style == BorderStyle_None) ? r.x2 : r.x2 - 1;
-    for (int y = fill_y_start; y <= fill_y_end; y++) {
-        for (int x = fill_x_start; x <= fill_x_end; x++) {
-            if (x >= 0 && y >= 0) {
-                auto& cell = cells_[y * width_ + x];
-                cell.content = " ";
-                cell.bg_color = bgcolor;
-            }
+    for (int y = std::max(fill_y_start, clip_y); y <= fill_y_end && y <= clip_y2; y++) {
+        for (int x = std::max(fill_x_start, clip_x); x <= fill_x_end && x <= clip_x2; x++) {
+            auto& cell = cells_[y * width_ + x];
+            cell.content = " ";
+            cell.bg_color = bgcolor;
         }
     }
 }
@@ -324,8 +413,8 @@ void DrawBuffer::ScrollBar(const Point& pos, int length, int offset, int content
         }
         else {
             auto& cell = cells_[pos.y * width_ + pos.x + i];
-            cell.content = " ";
-            cell.bg_color = is_thumb ? thumb_color : track_color;
+            cell.content = u8"\u2584";
+            cell.fg_color = is_thumb ? thumb_color : track_color;
         }
     }
 }
@@ -337,6 +426,7 @@ void DrawBuffer::ScrollBar(const Point& pos, int length, int offset, int content
 std::atomic<bool> Terminal::s_running = false;
 std::thread* Terminal::s_event_thread = nullptr;
 std::mutex   Terminal::s_event_mutex;
+std::vector<Event> Terminal::s_events;
 
 Terminal::Terminal()
 {
@@ -383,11 +473,11 @@ void Terminal::Render()
 
             if (cur_cell.fg_color != cur_fg) {
                 cur_fg = cur_cell.fg_color;
-                out += cur_fg.toAnsi();
+                out += cur_fg.toAnsi(true);
             }
             if (cur_cell.bg_color != cur_bg) {
                 cur_bg = cur_cell.bg_color;
-                out += cur_bg.toAnsi();
+                out += cur_bg.toAnsi(false);
             }
             if (cur_cell.bold != cur_bold) {
                 cur_bold = cur_cell.bold;
@@ -476,22 +566,22 @@ void Terminal::EnableRawMode()
     SetConsoleMode(hIn, dwMode);
 
     // Handle Ctrl+C cleanup
-    SetConsoleCtrlHandler(
-        [](DWORD fdwCtrlType) -> BOOL {
-            switch (fdwCtrlType) {
-                case CTRL_C_EVENT:
-                case CTRL_CLOSE_EVENT:
-                {
-                    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-                    std::cout << SHOW_CURSOR;
-                    std::cout << "\033[?1049l";  // Disable alternate buffer
-                }
-                    return FALSE;  // Let default handler call ExitProcess
-                default:
-                    return FALSE;
-            }
-        },
-        TRUE);
+    //SetConsoleCtrlHandler(
+    //    [](DWORD fdwCtrlType) -> BOOL {
+    //        switch (fdwCtrlType) {
+    //            case CTRL_C_EVENT:
+    //            case CTRL_CLOSE_EVENT:
+    //            {
+    //                HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    //                std::cout << SHOW_CURSOR;
+    //                std::cout << "\033[?1049l";  // Disable alternate buffer
+    //            }
+    //                return FALSE;  // Let default handler call ExitProcess
+    //            default:
+    //                return FALSE;
+    //        }
+    //    },
+    //    TRUE);
 
     originalInCP_ = GetConsoleCP();
     SetConsoleCP(CP_UTF8);
@@ -547,7 +637,7 @@ void Terminal::event_thread()
         if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown) {
         }
         else if (rec.EventType == MOUSE_EVENT) {
-        
+
         }
     }
 }
@@ -599,5 +689,252 @@ void Terminal::event_thread()
 }
 
 #endif
+
+bool EditLine::read_file(const std::string& path)
+{
+    std::ifstream infile(path, std::ios::binary);
+    if (!infile.is_open()) return false;
+    std::ostringstream ss;
+    ss << infile.rdbuf();
+    std::string content = ss.str();
+    infile.close();
+    parse(content);
+    return true;
+}
+
+void EditLine::parse(const std::string& text)
+{
+    size_t count = 1; // at least one line (the remainder after last \n)
+    const char* p = text.c_str();
+    while (*p) {
+        if (*p == '\n') ++count;
+        ++p;
+    }
+
+    lines.clear();
+    lines.reserve(count);
+
+    // Second pass: extract lines
+    p = text.c_str();
+    const char* s = p;  // start of current line
+    while (*p) {
+        if (*p == '\n') {
+            size_t len = static_cast<size_t>(p - s);
+            // strip trailing \r from \r\n
+            if (len > 0 && p[-1] == '\r')
+                --len;
+            lines.emplace_back(s, len);
+            s = p + 1;
+        }
+        ++p;
+    }
+    // push remaining content after the last \n
+    if (s <= p)
+        lines.emplace_back(s, static_cast<size_t>(p - s));
+}
+
+std::string EditLine::next_line()
+{
+    current++;
+    for (; current < lines.size(); ++current) {
+        if (lines[current].empty())
+            continue;
+        return lines[current];
+    }
+    return "";
+}
+
+std::string EditLine::next_tok(std::string delims)
+{
+    auto line = next_line();
+    if (line.empty())
+        return "";
+    tok_ = 0;
+    return tok(delims);
+}
+
+std::string EditLine::tok(std::string delims)
+{
+    auto line = lines[current];
+    size_t start = line.find_first_not_of(delims, tok_);
+    if (start == std::string::npos)
+        return "";
+
+    size_t end = line.find_first_of(delims, start);
+    if (end == std::string::npos)
+        return line.substr(start);
+    tok_ = end;
+    return line.substr(start, end - start);
+}
+
+int EditLine::tok_int(std::string delims)
+{
+    auto tk = tok(delims);
+    if (tk.empty())
+        return 0;
+    try {
+        return std::stoi(tk);
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+
+bool EditLine::tok_bool(std::string delims)
+{
+    auto tk = tok(delims);
+    // true: "yes", "true", "1"
+    // false: "no", "false", "0"
+    if (tk == "yes" || tk == "true" || tk == "1")
+        return true;
+    return false;
+}
+
+bool Win::Parse(EditLine& el)
+{
+    bool isComment = false;
+    std::string cmd = el.next_tok();
+    while (!cmd.empty()) {
+        if (cmd[0] == '#') {
+
+        }
+        else if (cmd.length() >= 2 && (cmd[0] == '/' && cmd[1] == '/')) {
+        }
+        else if (cmd.length() >= 2 && (cmd[0] == '/' && cmd[1] == '*')) {
+            isComment = true;
+        }
+        else if (cmd.length() >= 2 && (cmd[0] == '*' && cmd[1] == '/')) {
+            isComment = false;
+        }
+        else if (isComment) {
+
+        }
+        else if (cmd[0] == '}') {
+            break;
+        }
+        else if (ParseCmd(cmd, el)) {
+
+        }
+        else {
+
+        }
+        cmd = el.next_tok();
+    }
+    return true;
+}
+
+bool Win::ParseCmd(const std::string &cmd, EditLine& el)
+{
+    bool ret = true;
+    if (eqi(cmd, "{")) {
+    }
+    else if (eqi(cmd, "Object")) {
+        auto ob = mgr->Create(el.tok());
+        if (ob) {
+            child.push_back(ob);
+            ob->Parse(el);
+        }
+    }
+    else if (eqi(cmd, "Name")) {
+        name = el.tok();
+    }
+    else if (eqi(cmd, "Rect")) {
+        local.set(el.tok_int(), el.tok_int(), el.tok_int(), el.tok_int());
+    }
+    else if (eqi(cmd, "Visible")) {
+        is_visible = el.tok_bool();
+    }
+    else if (eqi(cmd, "DrawBorder")) {
+        draw_border = el.tok_bool();
+    }
+    else if (eqi(cmd, "fgColor")) {
+        fg_color = Color::Parse(el.tok());
+    }
+    else if (eqi(cmd, "bgColor")) {
+        bg_color = Color::Parse(el.tok());
+    }
+    else if (eqi(cmd, "BorderStyle")) {
+        border_style = ParseBorderStyle(el.tok());
+    }
+    return ret;
+}
+
+void Win::CalRect(Win* parent)
+{
+    int px = 0;
+    int py = 0;
+    int pw = local.width();
+    int ph = local.height();
+    if (parent) {
+
+        px = parent->clip.x;
+        py = parent->clip.y;
+        pw = parent->clip.width();
+        ph = parent->clip.height();
+    }
+
+    screen = local.move(px, py);
+    if (draw_border && border_style != BorderStyle_None) {
+        clip = screen.expand(-1, -1);
+    }
+    else {
+        clip = screen;
+    }
+
+}
+
+void Win::Paint(DrawBuffer& drawbuf)
+{
+    if (draw_border) {
+        drawbuf.Border(screen, bg_color, border_style, fg_color);
+    }
+    PaintChild(drawbuf);
+}
+
+void Win::PaintChild(DrawBuffer& drawbuf)
+{
+    drawbuf.PushClip(clip);
+    for (auto ch : child) {
+        if (!ch->is_visible)
+            continue;
+        ch->CalRect(this);
+        ch->Paint(drawbuf);
+    }
+    drawbuf.PopClip();
+}
+
+WinPtr Mgr::Create(std::string csid)
+{
+    Win* ob = nullptr;
+    if (eqi(csid, "Win")) {
+        ob = new Win(this);
+    }
+    else if (eqi(csid, "Button")) {
+        ob = new Button(this);
+    }
+    else if (eqi(csid, "Slider")) {
+        ob = new Slider(this);
+    }
+    else if (eqi(csid, "Edit")) {
+        ob = new Slider(this);
+    }
+    return WinPtr(ob);
+}
+
+bool Mgr::Parse(std::string content)
+{
+    EditLine el;
+    el.parse(content);
+    return Win::Parse(el);
+}
+
+void Mgr::Paint(DrawBuffer& drawbuf)
+{
+    local.set(0, 0, drawbuf.width_ - 1, drawbuf.height_ - 1);
+    screen = local;
+    clip = local;
+    Win::Paint(drawbuf);
+}
 
 NAMESPACE_END
