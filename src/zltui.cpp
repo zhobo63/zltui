@@ -15,12 +15,21 @@ static int utf8_char_width(uint32_t cp) {
     if (cp < 0x1100) return 1;
     // CJK, Hangul, etc. — wide characters
     if ((cp >= 0x1100 && cp <= 0x115F) ||   // Hangul Jamo
+        (cp >= 0x2600 && cp <= 0x26FF) ||   // Misc symbols (☀ ☮ ♠)
+        (cp >= 0x2700 && cp <= 0x27BF) ||   // Dingbats
         (cp >= 0x2E80 && cp <= 0xA4CF) ||   // CJK radicals, Kangxi, etc.
         (cp >= 0xAC00 && cp <= 0xD7A3) ||   // Hangul syllables
         (cp >= 0xF900 && cp <= 0xFAFF) ||   // CJK compatibility
+        (cp >= 0xFE00 && cp <= 0xFE0F) ||   // Variation Selectors
         (cp >= 0xFE10 && cp <= 0xFE6F) ||   // Vertical forms, small forms
         (cp >= 0xFF00 && cp <= 0xFF60) ||   // Fullwidth ASCII variants
         (cp >= 0xFFE0 && cp <= 0xFFE6)) {
+        return 2;
+    }
+    // Emoji — typically double-width in terminals
+    if ((cp >= 0x1F300 && cp <= 0x1F9FF) ||   // Misc Symbols & Pictographs, Emoticons
+        (cp >= 0x1FA00 && cp <= 0x1FA6F) ||   // Chess symbols
+        (cp >= 0x1FA70 && cp <= 0x1FAFF)) {   // Extended-A (chess, dominoes, etc.)
         return 2;
     }
     return 1;
@@ -171,6 +180,7 @@ Char Char::from_code(uint32_t cp)
 void Text::setText(const std::string& _text)
 {
     text = _text;
+    text_width = 0;
     chars.resize(0);
     const uint8_t* p = reinterpret_cast<const uint8_t*>(text.data());
     size_t len = text.size();
@@ -178,7 +188,9 @@ void Text::setText(const std::string& _text)
         uint32_t cp = 0;
         int n = utf8_mbtowc(cp, p, static_cast<int>(len));
         if (n <= 0) break;
-        chars.push_back(Char::from_code(cp));
+        auto ch = Char::from_code(cp);
+        text_width += ch.char_width;
+        chars.push_back(ch);
         p += n; len -= n;
     }
 }
@@ -272,9 +284,9 @@ void DrawBuffer::Text(const std::string& text, const Point& pos, const Color& co
     }
 }
 
-void DrawBuffer::Text(const Point& pos, const TUI::Text& text)
+void DrawBuffer::Text(const Point& pos, const TUI::Text& text, const Color& color)
 {
-    Text(text.text, pos, text.fg_color, text.bold, text.italic, text.underline);
+    Text(text.text, pos, color, text.bold, text.italic, text.underline);
 }
 
 void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style, const Color& color)
@@ -509,7 +521,20 @@ void Terminal::Render()
     std::cout << out;
 }
 
+void Terminal::GetEvent(std::vector<Event>& events)
+{
+    std::lock_guard<std::mutex> lock(s_event_mutex);
+    events.swap(s_events);
+}
+
 #ifdef _WIN32
+
+DWORD originalOutMode_ = 0;
+DWORD originalInMode_ = 0;
+UINT originalOutCP_ = 0;
+UINT originalInCP_ = 0;
+bool vtSupported_ = false;
+bool vtInputSupported_ = false;
 
 void Terminal::EnableRawMode()
 {
@@ -540,30 +565,25 @@ void Terminal::EnableRawMode()
 
     if (vt_out) {
         vtSupported_ = true;
-        // Request Mouse Reporting (1003 = Any Event/Motion, 1006 = SGR)
         // Request Bracketed Paste Mode (2004)
-        std::cout << "\033[?1003h\033[?1006h\033[?2004h";
+        // Note: mouse events are handled via ENABLE_MOUSE_INPUT + ReadConsoleInputW,
+        // so we do NOT enable VT mouse reporting (1003/1006) which would conflict.
+        std::cout << "\033[?2004h";
     }
 
     HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
     GetConsoleMode(hIn, &dwMode);
     originalInMode_ = dwMode;
 
-    // Configure input mode
+    // Configure input mode — do NOT use ENABLE_VIRTUAL_TERMINAL_INPUT because it
+    // converts mouse events into ANSI escape sequences (read as KEY events),
+    // which conflicts with ReadConsoleInputW MOUSE_EVENT records.
     dwMode &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_QUICK_EDIT_MODE |
                 ENABLE_PROCESSED_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT);
-    dwMode |= ENABLE_EXTENDED_FLAGS | ENABLE_WINDOW_INPUT;
+    dwMode |= ENABLE_EXTENDED_FLAGS | ENABLE_WINDOW_INPUT | ENABLE_MOUSE_INPUT;
 
-    if (SetConsoleMode(
-            hIn, dwMode | ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_MOUSE_INPUT)) {
-        vtInputSupported_ = true;
-        dwMode |= ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_MOUSE_INPUT;
-    } else {
-        // Fallback to legacy mouse input
-        dwMode |= ENABLE_MOUSE_INPUT;
-        vtInputSupported_ = false;
-    }
     SetConsoleMode(hIn, dwMode);
+    vtInputSupported_ = false;
 
     // Handle Ctrl+C cleanup
     //SetConsoleCtrlHandler(
@@ -585,6 +605,7 @@ void Terminal::EnableRawMode()
 
     originalInCP_ = GetConsoleCP();
     SetConsoleCP(CP_UTF8);
+    SetConsoleOutputCP(CP_UTF8);
 
     std::cout << "\033[?1049h" << HIDE_CURSOR;
 
@@ -637,12 +658,40 @@ void Terminal::event_thread()
         if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown) {
         }
         else if (rec.EventType == MOUSE_EVENT) {
+            Event ev;
+            ev.type = EventType_Mouse;
+            ev.x = rec.Event.MouseEvent.dwMousePosition.X;
+            ev.y = rec.Event.MouseEvent.dwMousePosition.Y;
 
+            auto flags = rec.Event.MouseEvent.dwEventFlags;
+            auto btnState = rec.Event.MouseEvent.dwButtonState;
+
+            // Wheel events: btnState is the delta, not button flags
+            if (flags == MOUSE_WHEELED) {
+                ev.button = GET_WHEEL_DELTA_WPARAM(btnState) > 0 ? 4 : 5; // scroll up/down
+            } else if (flags == MOUSE_HWHEELED) {
+                ev.button = GET_WHEEL_DELTA_WPARAM(btnState) > 0 ? 6 : 7; // scroll left/right
+            } else {
+                // Button events: determine which button and click count
+                if (btnState & FROM_LEFT_1ST_BUTTON_PRESSED)
+                    ev.button = 1;
+                else if (btnState & RIGHTMOST_BUTTON_PRESSED)
+                    ev.button = 2;
+                else if (btnState & FROM_LEFT_2ND_BUTTON_PRESSED)
+                    ev.button = 3;
+
+                ev.clicks = (flags == DOUBLE_CLICK) ? 2 : 1;
+            }
+
+            std::lock_guard<std::mutex> lock(s_event_mutex);
+            s_events.push_back(ev);
         }
     }
 }
 
 #else
+
+struct termios originalTermios_;
 
 void Terminal::EnableRawMode()
 {
@@ -763,7 +812,7 @@ std::string EditLine::tok(std::string delims)
     size_t end = line.find_first_of(delims, start);
     if (end == std::string::npos)
         return line.substr(start);
-    tok_ = end;
+    tok_ = (int)end;
     return line.substr(start, end - start);
 }
 
@@ -790,6 +839,15 @@ bool EditLine::tok_bool(std::string delims)
         return true;
     return false;
 }
+
+/// <summary>
+/// Win
+/// </summary>
+
+Color Win::COLOR_BG(30, 30, 30);
+Color Win::COLOR_HOVER(70, 70, 70);
+Color Win::COLOR_DOWN(90, 90, 90);
+Color Win::COLOR_BTN(50, 50, 50);
 
 bool Win::Parse(EditLine& el)
 {
@@ -821,6 +879,7 @@ bool Win::Parse(EditLine& el)
         }
         cmd = el.next_tok();
     }
+    mgr->is_dirty = true;
     return true;
 }
 
@@ -886,9 +945,7 @@ void Win::CalRect(Win* parent)
 
 void Win::Paint(DrawBuffer& drawbuf)
 {
-    if (draw_border) {
-        drawbuf.Border(screen, bg_color, border_style, fg_color);
-    }
+    PaintBorder(drawbuf);
     PaintChild(drawbuf);
 }
 
@@ -904,6 +961,140 @@ void Win::PaintChild(DrawBuffer& drawbuf)
     drawbuf.PopClip();
 }
 
+void Win::PaintBorder(DrawBuffer& drawbuf)
+{
+    if (draw_border) {
+        drawbuf.Border(screen, bg_color, border_style, fg_color);
+    }
+}
+
+Win* Win::GetUI(const std::string& _name)
+{
+    if (name == _name)
+        return this;
+    for (auto ch : child) {
+        Win* found = ch->GetUI(_name);
+        if (found)
+            return found;
+    }
+    return nullptr;
+}
+
+Win* Win::GetNotify(const Point& pt)
+{
+    if (!is_visible)
+        return nullptr;
+    if (!clip.inside(pt))
+        return nullptr;
+    for (int i = (int)child.size() - 1; i >= 0; i--) {
+        auto ch = child[i];
+        Win* n = ch->GetNotify(pt);
+        if (n) { return n; }
+    }
+    if (!is_notifiable)
+        return nullptr;
+    return this;
+}
+
+void Win::AddChild(WinPtr obj)
+{
+    child.push_back(obj);
+    mgr->is_dirty = true;
+}
+
+/// <summary>
+/// Label
+/// </summary>
+
+void Label::Paint(DrawBuffer& drawbuf)
+{
+    PaintBorder(drawbuf);
+    PaintText(drawbuf);
+    PaintChild(drawbuf);
+}
+void Label::PaintText(DrawBuffer& drawbuf)
+{
+    if (!text.empty()) {
+        int tx = clip.x;
+        switch (text_algn) {
+        case Align_Center:
+            tx = clip.x + ((clip.width() - text_width) >> 1);
+            break;
+        case Align_End:
+            tx = clip.x2 - text_width;
+            break;
+        }
+        drawbuf.Text(text, { tx, clip.y }, fg_color, bold, italic, underline);
+    }
+}
+
+/// <summary>
+/// Button
+/// </summary>
+
+Button::Button(Mgr* mgr) :Label(mgr) {
+    text_algn = Align_Center;
+    border_style = BorderStyle_None;
+    draw_border = true;
+    bg_color = COLOR_BTN;
+}
+
+void Button::PaintBorder(DrawBuffer& drawbuf)
+{
+    Color bg = bg_color;
+    if (is_down) {
+        bg = bg_color_down;
+    }
+    else if (is_notify) {
+        bg = bg_color_hover;
+    }
+    if (draw_border) {
+        drawbuf.Border(screen, bg, border_style, fg_color);
+    }
+}
+
+/// <summary>
+/// Check
+/// </summary>
+
+Check::Check(Mgr* mgr) : Button(mgr) {
+    bg_color = COLOR_BG;
+    text_algn = Align_Start;
+}
+
+
+void Check::PaintText(DrawBuffer& drawbuf)
+{
+    int mark_start = 3;
+    drawbuf.Text((checked) ? u8"✅" : u8"🔳", { clip.x, clip.y }, AnsiColor_Bright_White);    
+    //drawbuf.Text((checked) ? "[x]" : "[ ]", { clip.x, clip.y }, AnsiColor_White);
+    if (!text.empty()) {
+        int tx = clip.x + mark_start;
+        switch (text_algn) {
+        case Align_Center:
+            tx = clip.x + mark_start + ((clip.width() - text_width) >> 1);
+            break;
+        case Align_End:
+            tx = clip.x2 - text_width;
+            break;
+        }
+        drawbuf.Text(text, { tx, clip.y }, fg_color, bold, italic, underline);
+    }
+}
+
+void Check::Click()
+{
+    checked = !checked;
+    if (on_check) {
+        on_check(checked);
+    }
+}
+
+
+/// <summary>
+/// Mgr
+/// </summary>
+
 WinPtr Mgr::Create(std::string csid)
 {
     Win* ob = nullptr;
@@ -912,6 +1103,9 @@ WinPtr Mgr::Create(std::string csid)
     }
     else if (eqi(csid, "Button")) {
         ob = new Button(this);
+    }
+    else if (eqi(csid, "Check")) {
+        ob = new Check(this);
     }
     else if (eqi(csid, "Slider")) {
         ob = new Slider(this);
@@ -929,12 +1123,50 @@ bool Mgr::Parse(std::string content)
     return Win::Parse(el);
 }
 
+bool Mgr::Update()
+{
+    std::vector<Event> events;
+    Terminal::GetEvent(events);
+
+    for (auto& ev : events) {
+        if (ev.type == EventType_Mouse) {
+            Point pt = { ev.x, ev.y };
+            bool any_down = ev.button >= 1 && ev.button <= 3;
+            Win* notify = GetNotify(pt);
+            if (notify) {
+                notify->is_notify = true;
+                if (notify->is_down != any_down) {
+                    notify->is_down = any_down;
+                    is_dirty = true;
+                }
+                if (any_down && !is_prev_down) {
+                    notify->Click();
+                    is_prev_down = true;
+                }
+                else {
+                    is_prev_down = false;
+                }
+            }
+            if (notify_ != notify) {
+                is_dirty = true;
+                if (notify_) {
+                    notify_->is_down = false;
+                    notify_->is_notify = false;
+                }
+                notify_ = notify;
+            }
+        }
+    }
+    return is_dirty;
+}
 void Mgr::Paint(DrawBuffer& drawbuf)
 {
     local.set(0, 0, drawbuf.width_ - 1, drawbuf.height_ - 1);
     screen = local;
     clip = local;
+
     Win::Paint(drawbuf);
+    is_dirty = false;    
 }
 
 NAMESPACE_END

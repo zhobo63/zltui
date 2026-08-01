@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <functional>
 
 #define NAMESPACE_BEGIN(n) namespace n {
 #define NAMESPACE_END };  
@@ -117,8 +118,9 @@ struct Rect {
     int width() const { return x2 - x; }
     int height() const { return y2 - y; }
     void set(int _x, int _y, int _x2, int _y2) { x = _x; y = _y; x2 = _x2; y2 = _y2; }
-    Rect move(int ox, int oy) { return { x + ox, y + oy, x2 + ox, y2 + oy }; }
-    Rect expand(int ox, int oy) { return { x - ox, y - oy, x2 + ox, y2 + oy }; }
+    Rect move(int ox, int oy) const { return { x + ox, y + oy, x2 + ox, y2 + oy }; }
+    Rect expand(int ox, int oy) const { return { x - ox, y - oy, x2 + ox, y2 + oy }; }
+    bool inside(const Point& pt) const { return pt.x >= x && pt.x <= x2 && pt.y >= y && pt.y <= y2; }
 };
 
 struct Color {
@@ -153,10 +155,10 @@ struct Text {
     std::string text;
     std::vector<Char> chars;
 
-    Color fg_color = { AnsiColor_White };
     bool bold = false;
     bool italic = false;
     bool underline = false;
+    int text_width = 0;
 
     void setText(const std::string& _text);
 };
@@ -199,7 +201,7 @@ struct DrawBuffer {
     void resize(int w, int h);
     void clear();
     void Text(const std::string& text, const Point& pos, const Color& color = AnsiColor_White, bool bold = false, bool italic = false, bool underline = false);
-    void Text(const Point& pos, const TUI::Text& text);
+    void Text(const Point& pos, const TUI::Text& text, const Color& color = AnsiColor_White);
     void Border(const Rect& r, const Color& bgcolor, BorderStyle_ style = BorderStyle_Round, const Color& color = AnsiColor_Bright_White);
     void ScrollBar(const Point& pos, int length, int offset, int content_length, bool vertical, const Color& track_color = Color::TRACK, const Color& thumb_color = Color::THUMB);
 };
@@ -218,9 +220,11 @@ struct Event
 {
     EventType_ type = EventType_None;
     uint32_t key = 0;
+    // button: 1=left, 2=right, 3=middle, 4=scroll up, 5=scroll down, 6=h-scroll left, 7=h-scroll right
     int button = 0;
     int x = 0;
     int y = 0;
+    // clicks: number of clicks (1=single, 2=double)
     int clicks = 0;
     std::string paste_text;
 
@@ -241,19 +245,10 @@ public:
 
     DrawBuffer& GetDrawBuffer() { return drawbuffers[current_drawbuffer]; }
     void Render();
+    static void GetEvent(std::vector<Event> &events);
 private:
     int current_drawbuffer = 0;
     DrawBuffer drawbuffers[2];
-#ifdef _WIN32
-    DWORD originalOutMode_ = 0;
-    DWORD originalInMode_ = 0;
-    UINT originalOutCP_ = 0;
-    UINT originalInCP_ = 0;
-    bool vtSupported_ = false;
-    bool vtInputSupported_ = false;
-#else
-    struct termios originalTermios_;
-#endif
 
     /// Whether the watcher thread should keep running.
     static std::atomic<bool> s_running;
@@ -285,6 +280,21 @@ struct Mgr;
 struct Win;
 using WinPtr = std::shared_ptr<Win>;
 
+enum Align_
+{
+    Align_Start,
+    Align_Center,
+    Align_End,
+};
+
+enum Display_
+{
+    Display_User,
+    Display_Block,
+    Display_Flex,
+    Display_Grid,
+};
+
 struct Win
 {
     Win(Mgr* mgr) : mgr(mgr) {}
@@ -293,13 +303,21 @@ struct Win
     virtual bool ParseCmd(const std::string& cmd, EditLine& el);
     virtual void CalRect(Win* parent);
     virtual void Paint(DrawBuffer& drawbuf);
+    virtual void PaintBorder(DrawBuffer& drawbuf);
     virtual void PaintChild(DrawBuffer& drawbuf);
+    virtual Win* GetNotify(const Point& pt);
+    virtual Win* GetUI(const std::string &name);
+    virtual void AddChild(WinPtr obj);
+    virtual void Click() { if (on_click) on_click(); }
 
     std::string name = "";
     bool is_visible = true;
+    bool is_notifiable = true;
+    bool is_notify = false;
+    bool is_down = false;
     bool draw_border = false;
     BorderStyle_ border_style = BorderStyle_Round;
-    Color bg_color = Color(30, 30, 30);
+    Color bg_color = COLOR_BG;
     Color fg_color = AnsiColor_White;
 
     Rect local;
@@ -308,15 +326,42 @@ struct Win
 
     std::vector<WinPtr> child;
 
-    Mgr* mgr = nullptr;
+    Mgr* mgr = nullptr;    
+    std::function<void()> on_click;
+
+    static Color COLOR_BG;
+    static Color COLOR_HOVER;
+    static Color COLOR_DOWN;
+    static Color COLOR_BTN;
 };
 
-struct Button : Win
+struct Label : Win, Text
 {
-    Button(Mgr* mgr) :Win(mgr) {}
+    Label(Mgr* mgr) :Win(mgr) {}
 
-    Color bg_color_hover = Color(50, 50, 50);
-    Color bg_color_down = Color(70, 70, 70);
+    void Paint(DrawBuffer& drawbuf) override;
+    virtual void PaintText(DrawBuffer& drawbuf);
+
+    Align_ text_algn = Align_Start;
+};
+
+struct Button : Label
+{
+    Button(Mgr* mgr);
+    void PaintBorder(DrawBuffer& drawbuf) override;
+
+    Color bg_color_hover = COLOR_HOVER;
+    Color bg_color_down = COLOR_DOWN;
+};
+
+struct Check : Button
+{
+    Check(Mgr* mgr);
+    void PaintText(DrawBuffer& drawbuf) override;
+    void Click() override;
+
+    bool checked = false;
+    std::function<void(bool)> on_check;
 };
 
 struct Slider : Win
@@ -337,7 +382,12 @@ struct Mgr : Win
     Mgr() :Win(this) { draw_border = false; }
     WinPtr Create(std::string csid);
     bool Parse(std::string content);
+    bool Update();
     void Paint(DrawBuffer& drawbuf) override;
+
+    bool is_dirty = true;
+    bool is_prev_down = false;
+    Win* notify_ = nullptr;
 };
 
 NAMESPACE_END
