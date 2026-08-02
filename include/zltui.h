@@ -115,8 +115,8 @@ struct Rect {
     int x = 0, y = 0;
     int x2 = 0, y2 = 0;
 
-    int width() const { return x2 - x; }
-    int height() const { return y2 - y; }
+    int width() const { return x2 - x + 1; }
+    int height() const { return y2 - y + 1; }
     void set(int _x, int _y, int _x2, int _y2) { x = _x; y = _y; x2 = _x2; y2 = _y2; }
     Rect move(int ox, int oy) const { return { x + ox, y + oy, x2 + ox, y2 + oy }; }
     Rect expand(int ox, int oy) const { return { x - ox, y - oy, x2 + ox, y2 + oy }; }
@@ -136,8 +136,6 @@ struct Color {
     inline bool operator!=(const Color& o) const { return !operator==(o); }
     
     static Color Parse(const std::string& param);
-    static const Color TRACK;
-    static const Color THUMB;
 };
 
 struct Char {
@@ -160,7 +158,7 @@ struct Text {
     bool underline = false;
     int text_width = 0;
 
-    void setText(const std::string& _text);
+    virtual void setText(const std::string& _text);
 };
 
 struct Cell {
@@ -203,7 +201,7 @@ struct DrawBuffer {
     void Text(const std::string& text, const Point& pos, const Color& color = AnsiColor_White, bool bold = false, bool italic = false, bool underline = false);
     void Text(const Point& pos, const TUI::Text& text, const Color& color = AnsiColor_White);
     void Border(const Rect& r, const Color& bgcolor, BorderStyle_ style = BorderStyle_Round, const Color& color = AnsiColor_Bright_White);
-    void ScrollBar(const Point& pos, int length, int offset, int content_length, bool vertical, const Color& track_color = Color::TRACK, const Color& thumb_color = Color::THUMB);
+    void ScrollBar(const Point& pos, int length, int offset, int content_length, bool vertical, const Color& track_color = AnsiColor_White, const Color& thumb_color = AnsiColor_Bright_White);
 };
 
 std::string CursorMove(int x, int y);
@@ -333,6 +331,9 @@ struct Win
     static Color COLOR_HOVER;
     static Color COLOR_DOWN;
     static Color COLOR_BTN;
+    static Color COLOR_TRACK;
+    static Color COLOR_THUMB;
+
 };
 
 struct Label : Win, Text
@@ -341,6 +342,8 @@ struct Label : Win, Text
 
     void Paint(DrawBuffer& drawbuf) override;
     virtual void PaintText(DrawBuffer& drawbuf);
+
+    void setText(const std::string& _text) override;
 
     Align_ text_algn = Align_Start;
 };
@@ -368,8 +371,14 @@ struct Slider : Win
 {
     Slider(Mgr* mgr) :Win(mgr) {}
 
+    void CalRect(Win* parent) override;
+    void Paint(DrawBuffer& drawbuf) override;
+    virtual void PaintScrollBar(DrawBuffer& drawbuf);
+
     bool is_vertical = true;
     int scroll_value = 0;
+    Color track_color = COLOR_TRACK;
+    Color thumb_color = COLOR_THUMB;
 };
 
 struct Edit : Slider
@@ -382,12 +391,14 @@ struct Mgr : Win
     Mgr() :Win(this) { draw_border = false; }
     WinPtr Create(std::string csid);
     bool Parse(std::string content);
-    bool Update();
+    bool Update(Terminal& terminal);
     void Paint(DrawBuffer& drawbuf) override;
 
     bool is_dirty = true;
     bool is_prev_down = false;
     Win* notify_ = nullptr;
+    Win* hover_ = nullptr;
+    Slider* hover_slider = nullptr;
 };
 
 NAMESPACE_END

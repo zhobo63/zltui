@@ -40,7 +40,7 @@ int main()
     chk->setText("Check");
     pane1->AddChild(chk);
 
-    TUI::WinPtr pane2 = mgr.Create("Win");
+    TUI::WinPtr pane2 = mgr.Create("Slider");
     pane2->local.set(41, 0, size.x - 1, size.y - 1);
     pane2->draw_border = true;
     pane2->fg_color = TUI::Color(250, 0, 250);
@@ -59,7 +59,7 @@ int main()
         //    col.ansi = TUI::AnsiColor_Black;
         //}
 
-        if (mgr.Update()) {
+        if (mgr.Update(terminal)) {
             auto& buf = terminal.GetDrawBuffer();
             buf.clear();
 

@@ -79,9 +79,6 @@ std::string CursorMove(int x, int y)
     return "\033[" + std::to_string(y + 1) + ";" + std::to_string(x + 1) + "H";
 }
 
-const Color Color::TRACK(44, 44, 44);
-const Color Color::THUMB(159, 159, 159);
-
 std::string Color::toAnsi(bool fg) const
 {
     if (ansi == AnsiColor_None) {
@@ -848,6 +845,8 @@ Color Win::COLOR_BG(30, 30, 30);
 Color Win::COLOR_HOVER(70, 70, 70);
 Color Win::COLOR_DOWN(90, 90, 90);
 Color Win::COLOR_BTN(50, 50, 50);
+Color Win::COLOR_TRACK(44, 44, 44);
+Color Win::COLOR_THUMB(159, 159, 159);
 
 bool Win::Parse(EditLine& el)
 {
@@ -1028,6 +1027,12 @@ void Label::PaintText(DrawBuffer& drawbuf)
     }
 }
 
+void Label::setText(const std::string& _text)
+{
+    Text::setText(_text);
+    mgr->is_dirty = true;
+}
+
 /// <summary>
 /// Button
 /// </summary>
@@ -1090,6 +1095,35 @@ void Check::Click()
     }
 }
 
+/// <summary>
+/// Slider
+/// </summary>
+
+void Slider::CalRect(Win* parent)
+{
+    Win::CalRect(parent);
+    if (is_vertical) {
+        clip.x2--;
+    }
+    else {
+        clip.y2--;
+    }
+
+}
+
+void Slider::Paint(DrawBuffer& drawbuf)
+{
+    PaintBorder(drawbuf);
+    PaintScrollBar(drawbuf);
+    PaintChild(drawbuf);
+}
+void Slider::PaintScrollBar(DrawBuffer& drawbuf)
+{
+    if (is_vertical) {
+        drawbuf.ScrollBar({ clip.x2 + 1, clip.y }, clip.height(), scroll_value, clip.height() + 20, is_vertical,
+            track_color, thumb_color);
+    }
+}
 
 /// <summary>
 /// Mgr
@@ -1123,8 +1157,17 @@ bool Mgr::Parse(std::string content)
     return Win::Parse(el);
 }
 
-bool Mgr::Update()
+bool Mgr::Update(Terminal& terminal)
 {
+    auto size = terminal.GetSize();
+    if (size.x != local.x2 - 1 || size.y != local.y2 - 1) {
+        local.x2 = size.x - 1;
+        local.y2 = size.y - 1;
+        screen = local;
+        clip = local;
+        is_dirty = true;
+    }
+
     std::vector<Event> events;
     Terminal::GetEvent(events);
 
@@ -1161,10 +1204,6 @@ bool Mgr::Update()
 }
 void Mgr::Paint(DrawBuffer& drawbuf)
 {
-    local.set(0, 0, drawbuf.width_ - 1, drawbuf.height_ - 1);
-    screen = local;
-    clip = local;
-
     Win::Paint(drawbuf);
     is_dirty = false;    
 }
