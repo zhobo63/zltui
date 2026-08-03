@@ -18,7 +18,7 @@
 #include <functional>
 
 #define NAMESPACE_BEGIN(n) namespace n {
-#define NAMESPACE_END };  
+#define NAMESPACE_END };
 
 NAMESPACE_BEGIN(TUI)
 
@@ -140,7 +140,7 @@ struct Color {
     std::string toAnsi(bool fg) const;
     inline bool operator==(const Color& o) const { return r == o.r && g == o.g && b == o.b && ansi == o.ansi; }
     inline bool operator!=(const Color& o) const { return !operator==(o); }
-    
+
     static Color Parse(const std::string& param);
 };
 
@@ -172,9 +172,9 @@ struct Cell {
     int size = 1;
     Color fg_color = { AnsiColor_White };
     Color bg_color = { AnsiColor_Black };
-    bool bold = false;       
-    bool italic = false;     
-    bool underline = false;  
+    bool bold = false;
+    bool italic = false;
+    bool underline = false;
 
     inline bool operator==(const Cell& o) const {
         return size == o.size && bold == o.bold && italic == o.italic && underline == o.underline &&
@@ -316,6 +316,41 @@ enum Display_
 
 Display_ ParseDisplay(const std::string& tok);
 
+// Dock direction flags (bitwise combinable)
+enum Dock_
+{
+    Dock_None,        // no docking
+    Dock_Top = 1,     // dock to top edge
+    Dock_Left = 2,    // dock to left edge
+    Dock_Right = 4,   // dock to right edge
+    Dock_Down = 8,    // dock to bottom edge
+    Dock_All = Dock_Top | Dock_Left | Dock_Right | Dock_Down,  // stretch fill all edges
+};
+
+// Docking configuration: how a widget anchors inside its parent
+struct Dock {
+    Dock_ mode = Dock_None;       // docking direction(s)
+    Rect dock = { 0,0,100,100 };  // widget rect within parent (x,y,w,h) in percent
+    Rect offset = { 0,0,0,0 };    // offset from anchored position
+};
+
+// Arrange mode: how child items are laid out inside a container
+enum Arrange_
+{
+    Arrange_None,       // no arrangement
+    Arrange_Item,       // fixed-size item layout
+    Arrange_Content,    // auto-fit by content size
+};
+
+// Arrangement configuration for child widgets
+struct Arrange
+{
+    Arrange_ mode = Arrange_None;  // arrangement mode
+    bool is_vertical = true;       // vertical (true) or horizontal (false)
+    int items = 0;                 // number of items
+    Point item_size;               // size per item (w,h)
+};
+
 struct Win
 {
     Win(Mgr* mgr) : mgr(mgr) {}
@@ -351,7 +386,7 @@ struct Win
 
     std::vector<WinPtr> child;
 
-    Mgr* mgr = nullptr;    
+    Mgr* mgr = nullptr;
     std::function<void()> on_click;
 
     static Color COLOR_BG;

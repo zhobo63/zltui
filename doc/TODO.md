@@ -71,11 +71,6 @@
 - **问题**: 当文本到达 clip 右边界时直接丢弃，不会自动换行到下一行。
 - **建议**: 在 `cur_x + char_width > clip.x2` 时执行换行逻辑。
 
-### 13. DrawBuffer::ScrollBar() — 水平滚动条字符选择
-- **位置**: `DrawBuffer::ScrollBar()` (L405)
-- **问题**: 水平滚动条使用 `▄` (U+2584) 作为填充，可能不够美观；垂直滚动条仅用空格。
-- **建议**: 考虑使用更合适的 Unicode 块元素（如 `█` U+2588）。
-
 ### 14. Terminal::Render() — 差异渲染优化空间
 - **位置**: `Terminal::Render()` (L443)
 - **问题**:
@@ -102,21 +97,6 @@
 - **位置**: `Label::PaintText()` (L1126)
 - **问题**: 虽然 `DrawBuffer::Text()` 支持 `\n`，但 `text_width` 计算基于整个字符串（含换行），对齐逻辑不考虑多行。
 - **建议**: 按行拆分文本，逐行渲染并对齐。
-
-### 19. Button — 缺少按下态的视觉反馈（非背景色）
-- **位置**: `Button::PaintBorder()` (L1176)
-- **问题**: 仅改变背景色，没有边框变化或位移效果。
-- **建议**: 在 `is_down` 时调整边框样式或使用不同颜色。
-
-### 21. Slider — 拖拽滚动未实现
-- **位置**: `Slider::Event()` (L1277)
-- **问题**: 仅处理滚轮事件（button 4/5），不支持鼠标拖拽 thumb。
-- **建议**: 在 `Event()` 中检测鼠标左键按下 + 移动，计算新的 `scroll_value`。
-
-### 22. Slider — content_length 硬编码
-- **位置**: `Slider::PaintScrollBar()` (L1272)
-- **问题**: `content_length` 传入了 `clip.height() + 20`（魔法数字），没有与子控件实际内容高度关联。
-- **建议**: 根据子控件的总高度动态计算 `content_length`。
 
 ### 23. Mgr::Create() — Edit 类型注册但无功能
 - **位置**: `Mgr::Create()` (L1304)
