@@ -448,6 +448,7 @@ void DrawBuffer::ScrollBar(const Point& pos, int length, int offset, int content
             if (!clip.inside(Point{ pos.x, cy }))
                 continue;
             auto& cell = cells_[cy * width_ + pos.x];
+            cell.size = 1;
             if (is_thumb) {
                 cell.content = u8"\u2588";  // █ Full Block
                 cell.fg_color = thumb_color;
@@ -461,6 +462,7 @@ void DrawBuffer::ScrollBar(const Point& pos, int length, int offset, int content
             if (!clip.inside(Point{cx, pos.y}))
                 continue;
             auto& cell = cells_[pos.y * width_ + cx];
+            cell.size = 1;
             if (is_thumb) {
                 cell.content = u8"\u2584";  // half Block
                 cell.fg_color = thumb_color;
@@ -1129,7 +1131,7 @@ Win* Win::GetSlider(const Point& pt)
 {
     if (!is_visible)
         return nullptr;
-    if (!clip.inside(pt))
+    if (!screen.inside(pt))
         return nullptr;
     for (int i = (int)child.size() - 1; i >= 0; i--) {
         auto ch = child[i];
