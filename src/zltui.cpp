@@ -144,6 +144,7 @@ Color Color::Parse(const std::string& param)
             std::string inner = param.substr(lp + 1, rp - lp - 1);
             EditLine el;
             el.lines.push_back(inner);
+            el.current = 0;
             uint8_t r = static_cast<uint8_t>(el.tok_int(","));
             uint8_t g = static_cast<uint8_t>(el.tok_int(","));
             uint8_t b = static_cast<uint8_t>(el.tok_int(","));
@@ -232,40 +233,34 @@ void DrawBuffer::Text(const std::string& text, const Point& pos, const Color& co
 
     const uint8_t* p = reinterpret_cast<const uint8_t*>(text.data());
     size_t len = text.size();
+    Rect clip = { 0,0,width_ - 1, height_ - 1 };
 
-    while (len > 0) {
-        // skip if out of bounds
-        if (cur_x < 0 || cur_y < 0 || cur_y >= height_) break;
+    if (!clips_.empty()) {
+        auto last_clip = clips_.back();
+        clip.x = std::max(clip.x, last_clip.x);
+        clip.y = std::max(clip.y, last_clip.y);
+        clip.x2 = std::min(clip.x2, last_clip.x2);
+        clip.y2 = std::min(clip.y2, last_clip.y2);
+    }
 
-        int right = width_;
-        if (!clips_.empty()) {
-            const auto& clip = clips_.back();
-            if (cur_y < clip.y || cur_y > clip.y2)
-                break;
-            if (clip.x2 < right)
-                right = clip.x2;
+    int px = cur_y * width_;
+    while (len > 0 && cur_y <= clip.y2) {
+        uint32_t cp = 0;
+        int n = utf8_mbtowc(cp, p, static_cast<int>(len));
+        if (n <= 0) break;
+
+        // newline: move to next row
+        if (cp == '\n') {
+            cur_y++;
+            cur_x = pos.x;
+            p += n; len -= n;
+            px = cur_y * width_;
+            continue;
         }
 
-        int px = cur_y * width_ + cur_x;
-        int cw = 0;
-
-        while (len > 0 && cur_x + cw < right) {
-            uint32_t cp = 0;
-            int n = utf8_mbtowc(cp, p, static_cast<int>(len));
-            if (n <= 0) break;
-
-            // newline: move to next row
-            if (cp == '\n') {
-                cur_y++;
-                cur_x = pos.x;
-                p += n; len -= n;
-                break;
-            }
-
-            int char_width = utf8_char_width(cp);
-            if (cur_x + cw + char_width > right) break;
-
-            auto& cell = cells_[px + cw];
+        int char_width = utf8_char_width(cp);
+        if (clip.inside(Point{ cur_x, cur_y }) && cur_x + char_width <= clip.x2) {
+            auto& cell = cells_[px + cur_x];
             cell.fg_color = color;
             cell.size = char_width;
             cell.bold = bold;
@@ -273,12 +268,12 @@ void DrawBuffer::Text(const std::string& text, const Point& pos, const Color& co
             cell.underline = underline;
             cell.content = std::string((const char*)p, (size_t)n);
             if (cell.size > 1) {
-                cells_[px + cw + 1].content = "";
+                cells_[px + cur_x + 1].content = "";
             }
-            cw += cell.size;
-            p += n; len -= n;
         }
-    }
+        cur_x += char_width;
+        p += n; len -= n;
+    }    
 }
 
 void DrawBuffer::Text(const Point& pos, const TUI::Text& text, const Color& color)
@@ -813,6 +808,12 @@ std::string EditLine::tok(std::string delims)
     return line.substr(start, end - start);
 }
 
+std::string EditLine::tok_line()
+{
+    auto line = lines[current];
+    return line.substr(tok_);
+}
+
 int EditLine::tok_int(std::string delims)
 {
     auto tk = tok(delims);
@@ -835,6 +836,76 @@ bool EditLine::tok_bool(std::string delims)
     if (tk == "yes" || tk == "true" || tk == "1")
         return true;
     return false;
+}
+
+/// <summary>
+/// 
+/// </summary>
+
+std::string ParseText(const std::string& t)
+{
+    std::string out;
+    out.reserve(t.size());
+    const char* p = t.c_str();
+    while (*p) {
+        if (*p == '\\' && *(p + 1)) {
+            ++p;
+            switch (*p) {
+            case 'n': out += '\n'; break;
+            case 's': out += ' ';  break;
+            case 'u':
+            {
+                uint32_t cp = 0;
+                for (int i = 0; i < 4 && *(p + 1); ++i) {
+                    char c = *++p;
+                    cp <<= 4;
+                    if (c >= '0' && c <= '9')      cp |= (c - '0');
+                    else if (c >= 'a' && c <= 'f')  cp |= (c - 'a' + 10);
+                    else if (c >= 'A' && c <= 'F')  cp |= (c - 'A' + 10);
+                }
+                // encode codepoint as UTF-8
+                if (cp < 0x80) {
+                    out += static_cast<char>(cp);
+                } else if (cp < 0x800) {
+                    out += static_cast<char>(0xC0 | (cp >> 6));
+                    out += static_cast<char>(0x80 | (cp & 0x3F));
+                } else if (cp < 0x10000) {
+                    out += static_cast<char>(0xE0 | (cp >> 12));
+                    out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                    out += static_cast<char>(0x80 | (cp & 0x3F));
+                } else {
+                    out += static_cast<char>(0xF0 | (cp >> 18));
+                    out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+                    out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                    out += static_cast<char>(0x80 | (cp & 0x3F));
+                }
+                break;
+            }
+            default: out += '\\'; out += *p; break;
+            }
+        } else {
+            out += *p;
+        }
+        ++p;
+    }
+    return out;
+}
+
+Align_ ParseAlign(const std::string& tok)
+{
+    if (eqi(tok, "Start"))  return Align_Start;
+    if (eqi(tok, "Center")) return Align_Center;
+    if (eqi(tok, "End"))    return Align_End;
+    return Align_Start;
+}
+
+Display_ ParseDisplay(const std::string& tok)
+{
+    if (eqi(tok, "User"))  return Display_User;
+    if (eqi(tok, "Block")) return Display_Block;
+    if (eqi(tok, "Flex"))  return Display_Flex;
+    if (eqi(tok, "Grid"))  return Display_Grid;
+    return Display_User;
 }
 
 /// <summary>
@@ -898,13 +969,22 @@ bool Win::ParseCmd(const std::string &cmd, EditLine& el)
         name = el.tok();
     }
     else if (eqi(cmd, "Rect")) {
-        local.set(el.tok_int(), el.tok_int(), el.tok_int(), el.tok_int());
+        local.x = el.tok_int();
+        local.y = el.tok_int();
+        local.x2 = el.tok_int();
+        local.y2 = el.tok_int();
     }
     else if (eqi(cmd, "Visible")) {
         is_visible = el.tok_bool();
     }
+    else if (eqi(cmd, "Notify")) {
+        is_notifiable = el.tok_bool();
+    }
     else if (eqi(cmd, "DrawBorder")) {
         draw_border = el.tok_bool();
+    }
+    else if (eqi(cmd, "BorderStyle")) {
+        border_style = ParseBorderStyle(el.tok());
     }
     else if (eqi(cmd, "fgColor")) {
         fg_color = Color::Parse(el.tok());
@@ -912,8 +992,8 @@ bool Win::ParseCmd(const std::string &cmd, EditLine& el)
     else if (eqi(cmd, "bgColor")) {
         bg_color = Color::Parse(el.tok());
     }
-    else if (eqi(cmd, "BorderStyle")) {
-        border_style = ParseBorderStyle(el.tok());
+    else {
+        ret = false;
     }
     return ret;
 }
@@ -1020,6 +1100,23 @@ void Win::AddChild(WinPtr obj)
 /// Label
 /// </summary>
 
+bool Label::ParseCmd(const std::string& cmd, EditLine& el)
+{
+    bool ret = true;
+    if (eqi(cmd, "TextAlign")) {
+        text_algn = ParseAlign(el.tok());
+    }
+    else if (eqi(cmd, "Text")) {
+        setText(ParseText(el.tok_line()));
+    }
+    else if (Win::ParseCmd(cmd, el)) {
+    }
+    else {
+        ret = false;
+    }
+    return ret;
+}
+
 void Label::Paint(DrawBuffer& drawbuf)
 {
     PaintBorder(drawbuf);
@@ -1051,6 +1148,23 @@ void Label::setText(const std::string& _text)
 /// <summary>
 /// Button
 /// </summary>
+
+bool Button::ParseCmd(const std::string& cmd, EditLine& el)
+{
+    bool ret = true;
+    if (eqi(cmd, "ColorHover")) {
+        bg_color_hover = Color::Parse(el.tok());
+    }
+    else if (eqi(cmd, "ColorDown")) {
+        bg_color_down = Color::Parse(el.tok());
+    }
+    else if (Label::ParseCmd(cmd, el)) {
+    }
+    else {
+        ret = false;
+    }
+    return ret;
+}
 
 Button::Button(Mgr* mgr) :Label(mgr) {
     text_algn = Align_Center;
@@ -1114,6 +1228,26 @@ void Check::Click()
 /// Slider
 /// </summary>
 
+bool Slider::ParseCmd(const std::string& cmd, EditLine& el)
+{
+    bool ret = true;
+    if (eqi(cmd, "Vertical")) {
+        is_vertical = el.tok_bool();
+    }
+    else if (eqi(cmd, "TrackColor")) {
+        track_color = Color::Parse(el.tok());
+    }
+    else if (eqi(cmd, "ThumbColor")) {
+        thumb_color = Color::Parse(el.tok());
+    }
+    else if (Win::ParseCmd(cmd, el)) {
+    }
+    else {
+        ret = false;
+    }
+    return ret;
+}
+
 void Slider::CalRect(Win* parent)
 {
     Win::CalRect(parent);
@@ -1150,6 +1284,8 @@ void Slider::Event(const TUI::Event& ev)
     case 5:
         scroll_value++;
         break;
+    default:
+        return;
     }
     mgr->is_dirty = true;
 }
@@ -1171,6 +1307,9 @@ WinPtr Mgr::Create(std::string csid)
     if (eqi(csid, "Win")) {
         ob = new Win(this);
     }
+    else if (eqi(csid, "Label")) {
+        ob = new Label(this);
+    }
     else if (eqi(csid, "Button")) {
         ob = new Button(this);
     }
@@ -1181,7 +1320,7 @@ WinPtr Mgr::Create(std::string csid)
         ob = new Slider(this);
     }
     else if (eqi(csid, "Edit")) {
-        ob = new Slider(this);
+        ob = new Edit(this);
     }
     return WinPtr(ob);
 }
@@ -1196,7 +1335,7 @@ bool Mgr::Parse(std::string content)
 bool Mgr::Update(Terminal& terminal)
 {
     auto size = terminal.GetSize();
-    if (size.x != local.x2 - 1 || size.y != local.y2 - 1) {
+    if (local.x2 != size.x - 1 || local.y2 != size.y - 1) {
         local.x2 = size.x - 1;
         local.y2 = size.y - 1;
         screen = local;

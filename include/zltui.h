@@ -81,6 +81,9 @@ static constexpr const char* ANSI_CLEAR_TO_BEGIN = "\x1B[1J";      // clears fro
 static constexpr const char* SHOW_CURSOR = "\033[?25h";
 static constexpr const char* HIDE_CURSOR = "\033[?25l";
 
+#undef min
+#undef max
+
 enum AnsiColor_ : uint8_t {
     AnsiColor_None = 0,
 
@@ -120,6 +123,7 @@ struct Rect {
     void set(int _x, int _y, int _x2, int _y2) { x = _x; y = _y; x2 = _x2; y2 = _y2; }
     Rect move(int ox, int oy) const { return { x + ox, y + oy, x2 + ox, y2 + oy }; }
     Rect expand(int ox, int oy) const { return { x - ox, y - oy, x2 + ox, y2 + oy }; }
+    Rect intersect(const Rect& r) const { return { std::max(x, r.x), std::max(y, r.y), std::min(x2, r.x2), std::min(y2, r.y2)}; }
     bool inside(const Point& pt) const { return pt.x >= x && pt.x <= x2 && pt.y >= y && pt.y <= y2; }
     bool inside(const Rect& r) const { return r.x >= x && r.x2 <= x2 && r.y >= y && r.y2 <= y2; }
     bool collide(const Rect& r) const { return !(r.x2 < x || r.x > x2 || r.y2 < y || r.y > y2); }
@@ -282,6 +286,7 @@ struct EditLine {
     std::string next_line();
     std::string next_tok(std::string delims = " \t");
     std::string tok(std::string delims = " \t");
+    std::string tok_line();
     int tok_int(std::string delims = " \t");
     bool tok_bool(std::string delims = " \t");
 };
@@ -297,13 +302,17 @@ enum Align_
     Align_End,
 };
 
+Align_ ParseAlign(const std::string& tok);
+
 enum Display_
 {
-    Display_User,
-    Display_Block,
+    Display_User,   // rect define by user
+    Display_Block,  // follow parent clip w and auto height by content
     Display_Flex,
     Display_Grid,
 };
+
+Display_ ParseDisplay(const std::string& tok);
 
 struct Win
 {
@@ -356,6 +365,7 @@ struct Label : Win, Text
 {
     Label(Mgr* mgr) :Win(mgr) {}
 
+    bool ParseCmd(const std::string& cmd, EditLine& el) override;
     void Paint(DrawBuffer& drawbuf) override;
     virtual void PaintText(DrawBuffer& drawbuf);
 
@@ -367,6 +377,7 @@ struct Label : Win, Text
 struct Button : Label
 {
     Button(Mgr* mgr);
+    bool ParseCmd(const std::string& cmd, EditLine& el) override;
     void PaintBorder(DrawBuffer& drawbuf) override;
 
     Color bg_color_hover = COLOR_HOVER;
@@ -387,6 +398,7 @@ struct Slider : Win
 {
     Slider(Mgr* mgr) :Win(mgr) {}
 
+    bool ParseCmd(const std::string& cmd, EditLine& el) override;
     void CalRect(Win* parent) override;
     void Paint(DrawBuffer& drawbuf) override;
     bool IsSlider() const override { return true; }
