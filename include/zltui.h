@@ -121,6 +121,8 @@ struct Rect {
     Rect move(int ox, int oy) const { return { x + ox, y + oy, x2 + ox, y2 + oy }; }
     Rect expand(int ox, int oy) const { return { x - ox, y - oy, x2 + ox, y2 + oy }; }
     bool inside(const Point& pt) const { return pt.x >= x && pt.x <= x2 && pt.y >= y && pt.y <= y2; }
+    bool inside(const Rect& r) const { return r.x >= x && r.x2 <= x2 && r.y >= y && r.y2 <= y2; }
+    bool collide(const Rect& r) const { return !(r.x2 < x || r.x > x2 || r.y2 < y || r.y > y2); }
 };
 
 struct Color {
@@ -214,6 +216,16 @@ enum EventType_
     EventType_Paste,
 };
 
+enum Button_
+{
+    Button_None,
+    Button_Left,
+    Button_Right,
+    Button_Middle,
+    Button_ScrollUp,
+    Button_ScrollDown,
+};
+
 struct Event
 {
     EventType_ type = EventType_None;
@@ -304,9 +316,13 @@ struct Win
     virtual void PaintBorder(DrawBuffer& drawbuf);
     virtual void PaintChild(DrawBuffer& drawbuf);
     virtual Win* GetNotify(const Point& pt);
+    virtual Win* GetSlider(const Point& pt);
     virtual Win* GetUI(const std::string &name);
     virtual void AddChild(WinPtr obj);
     virtual void Click() { if (on_click) on_click(); }
+    virtual bool IsSlider() const { return false; }
+    virtual void Event(const Event& ev) {}
+    virtual Point GetClipPos() const;
 
     std::string name = "";
     bool is_visible = true;
@@ -373,6 +389,9 @@ struct Slider : Win
 
     void CalRect(Win* parent) override;
     void Paint(DrawBuffer& drawbuf) override;
+    bool IsSlider() const override { return true; }
+    void Event(const TUI::Event& ev) override;
+    Point GetClipPos() const override;
     virtual void PaintScrollBar(DrawBuffer& drawbuf);
 
     bool is_vertical = true;
@@ -396,9 +415,9 @@ struct Mgr : Win
 
     bool is_dirty = true;
     bool is_prev_down = false;
-    Win* notify_ = nullptr;
+    Win* notify_ = nullptr;     //input focus
     Win* hover_ = nullptr;
-    Slider* hover_slider = nullptr;
+    Win* hover_slider_ = nullptr;
 };
 
 NAMESPACE_END

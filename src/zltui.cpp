@@ -918,21 +918,22 @@ bool Win::ParseCmd(const std::string &cmd, EditLine& el)
     return ret;
 }
 
+Point Win::GetClipPos() const
+{
+    return { clip.x, clip.y };
+}
+
 void Win::CalRect(Win* parent)
 {
-    int px = 0;
-    int py = 0;
+    Point pt = { 0, 0 };
     int pw = local.width();
     int ph = local.height();
     if (parent) {
-
-        px = parent->clip.x;
-        py = parent->clip.y;
+        pt = parent->GetClipPos();
         pw = parent->clip.width();
         ph = parent->clip.height();
     }
-
-    screen = local.move(px, py);
+    screen = local.move(pt.x, pt.y);
     if (draw_border && border_style != BorderStyle_None) {
         clip = screen.expand(-1, -1);
     }
@@ -955,6 +956,8 @@ void Win::PaintChild(DrawBuffer& drawbuf)
         if (!ch->is_visible)
             continue;
         ch->CalRect(this);
+        if (!clip.collide(ch->screen))
+            continue;
         ch->Paint(drawbuf);
     }
     drawbuf.PopClip();
@@ -990,9 +993,21 @@ Win* Win::GetNotify(const Point& pt)
         Win* n = ch->GetNotify(pt);
         if (n) { return n; }
     }
-    if (!is_notifiable)
+    return (is_notifiable) ? this : nullptr;
+}
+
+Win* Win::GetSlider(const Point& pt)
+{
+    if (!is_visible)
         return nullptr;
-    return this;
+    if (!clip.inside(pt))
+        return nullptr;
+    for (int i = (int)child.size() - 1; i >= 0; i--) {
+        auto ch = child[i];
+        Win* n = ch->GetSlider(pt);
+        if (n) { return n; }
+    }
+    return (IsSlider() && is_notifiable) ? this : nullptr;
 }
 
 void Win::AddChild(WinPtr obj)
@@ -1050,7 +1065,7 @@ void Button::PaintBorder(DrawBuffer& drawbuf)
     if (is_down) {
         bg = bg_color_down;
     }
-    else if (is_notify) {
+    else if (mgr->hover_ == this) {
         bg = bg_color_hover;
     }
     if (draw_border) {
@@ -1125,6 +1140,27 @@ void Slider::PaintScrollBar(DrawBuffer& drawbuf)
     }
 }
 
+void Slider::Event(const TUI::Event& ev)
+{
+    switch (ev.button) {
+    case 4:
+        scroll_value--;
+        if (scroll_value < 0) scroll_value = 0;
+        break;
+    case 5:
+        scroll_value++;
+        break;
+    }
+    mgr->is_dirty = true;
+}
+
+Point Slider::GetClipPos() const
+{
+    if (is_vertical)
+        return { clip.x, clip.y - scroll_value };
+    return { clip.x - scroll_value, clip.y };
+}
+
 /// <summary>
 /// Mgr
 /// </summary>
@@ -1168,35 +1204,53 @@ bool Mgr::Update(Terminal& terminal)
         is_dirty = true;
     }
 
-    std::vector<Event> events;
+    std::vector<TUI::Event> events;
     Terminal::GetEvent(events);
 
     for (auto& ev : events) {
         if (ev.type == EventType_Mouse) {
             Point pt = { ev.x, ev.y };
             bool any_down = ev.button >= 1 && ev.button <= 3;
+            bool first_down = any_down && !is_prev_down;
+            is_prev_down = any_down;
             Win* notify = GetNotify(pt);
             if (notify) {
-                notify->is_notify = true;
+                if (notify != notify_) {
+                    if (first_down) {
+                        if (notify_) {
+                            notify_->is_notify = false;
+                        }
+                        notify_ = notify;
+                        notify_->is_notify = true;
+                    }
+                    is_dirty = true;
+                }
+                else if (first_down) {
+                    notify->is_notify = true;
+                    is_dirty = true;
+                }
                 if (notify->is_down != any_down) {
                     notify->is_down = any_down;
                     is_dirty = true;
                 }
-                if (any_down && !is_prev_down) {
+                if (first_down) {
                     notify->Click();
-                    is_prev_down = true;
-                }
-                else {
-                    is_prev_down = false;
                 }
             }
-            if (notify_ != notify) {
-                is_dirty = true;
-                if (notify_) {
-                    notify_->is_down = false;
-                    notify_->is_notify = false;
+            if (hover_ != notify) {
+                if (hover_) {
+                    hover_->is_down = false;
                 }
-                notify_ = notify;
+                if(!any_down)
+                    hover_ = notify;
+                is_dirty = true;
+            }
+            if (notify_) {
+                notify_->Event(ev);
+            }
+            hover_slider_ = GetSlider(pt);
+            if (hover_slider_ && hover_slider_ != notify_) {
+                hover_slider_->Event(ev);
             }
         }
     }
