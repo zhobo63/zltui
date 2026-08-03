@@ -35,7 +35,6 @@ static int utf8_char_width(uint32_t cp) {
     return 1;
 }
 
-
 static int utf8_mbtowc(uint32_t& cp, const uint8_t* s, int len)
 {
     uint32_t c=(uint32_t)s[0];
@@ -64,6 +63,21 @@ static int utf8_mbtowc(uint32_t& cp, const uint8_t* s, int len)
         cp=c;
         return 1;
     }
+}
+
+static int utf8_width(const std::string& text) {
+    int text_width = 0;
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(text.data());
+    size_t len = text.size();
+    while (len > 0) {
+        uint32_t cp = 0;
+        int n = utf8_mbtowc(cp, p, static_cast<int>(len));
+        if (n <= 0) break;
+        auto ch = Char::from_code(cp);
+        text_width += ch.char_width;
+        p += n; len -= n;
+    }
+    return text_width;
 }
 
 static bool eqi(const std::string& a, const char* b)
@@ -148,6 +162,30 @@ Color Color::Parse(const std::string& param)
             uint8_t r = static_cast<uint8_t>(el.tok_int(","));
             uint8_t g = static_cast<uint8_t>(el.tok_int(","));
             uint8_t b = static_cast<uint8_t>(el.tok_int(","));
+            return Color(r, g, b);
+        }
+    }
+    // "#RRGGBB" or "#RGB"
+    if (!param.empty() && param[0] == '#') {
+        size_t len = param.size();
+        auto hex_val = [](char c) -> uint8_t {
+            if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
+            if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(c - 'a' + 10);
+            if (c >= 'A' && c <= 'F') return static_cast<uint8_t>(c - 'A' + 10);
+            return 0;
+        };
+        if (len == 7) {
+            // #RRGGBB
+            uint8_t r = (hex_val(param[1]) << 4) | hex_val(param[2]);
+            uint8_t g = (hex_val(param[3]) << 4) | hex_val(param[4]);
+            uint8_t b = (hex_val(param[5]) << 4) | hex_val(param[6]);
+            return Color(r, g, b);
+        }
+        if (len == 4) {
+            // #RGB -> #RRGGBB
+            uint8_t r = hex_val(param[1]) * 17;
+            uint8_t g = hex_val(param[2]) * 17;
+            uint8_t b = hex_val(param[3]) * 17;
             return Color(r, g, b);
         }
     }
@@ -236,11 +274,7 @@ void DrawBuffer::Text(const std::string& text, const Point& pos, const Color& co
     Rect clip = { 0,0,width_ - 1, height_ - 1 };
 
     if (!clips_.empty()) {
-        auto last_clip = clips_.back();
-        clip.x = std::max(clip.x, last_clip.x);
-        clip.y = std::max(clip.y, last_clip.y);
-        clip.x2 = std::min(clip.x2, last_clip.x2);
-        clip.y2 = std::min(clip.y2, last_clip.y2);
+        clip = clip.intersect(clips_.back());
     }
 
     int px = cur_y * width_;
@@ -273,7 +307,7 @@ void DrawBuffer::Text(const std::string& text, const Point& pos, const Color& co
         }
         cur_x += char_width;
         p += n; len -= n;
-    }    
+    }
 }
 
 void DrawBuffer::Text(const Point& pos, const TUI::Text& text, const Color& color)
@@ -284,16 +318,9 @@ void DrawBuffer::Text(const Point& pos, const TUI::Text& text, const Color& colo
 void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style, const Color& color)
 {
     // Apply clip region
-    int clip_x = 0;
-    int clip_y = 0;
-    int clip_x2 = width_ - 1;
-    int clip_y2 = height_ - 1;
+    Rect clip = { 0,0,width_ - 1, height_ - 1 };
     if (!clips_.empty()) {
-        const auto& clip = clips_.back();
-        clip_x = clip.x;
-        clip_y = clip.y;
-        clip_x2 = clip.x2;
-        clip_y2 = clip.y2;
+        clip = clip.intersect(clips_.back());
     }
 
     std::string h_line, v_line, tl, tr, bl, br;
@@ -328,28 +355,28 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
     }
     if (style != BorderStyle_None) {
         // Draw top-left corner
-        if (r.x >= clip_x && r.x <= clip_x2 && r.y >= clip_y && r.y <= clip_y2) {
+        if (clip.inside(Point {r.x, r.y})) {
             auto& cell = cells_[r.y * width_ + r.x];
             cell.content = tl;
             cell.fg_color = color;
             cell.bg_color = bgcolor;
         }
         // Draw top-right corner
-        if (r.x2 >= clip_x && r.x2 <= clip_x2 && r.y >= clip_y && r.y <= clip_y2) {
+        if (clip.inside(Point{ r.x2, r.y })) {
             auto& cell = cells_[r.y * width_ + r.x2];
             cell.content = tr;
             cell.fg_color = color;
             cell.bg_color = bgcolor;
         }
         // Draw bottom-left corner
-        if (r.x >= clip_x && r.x <= clip_x2 && r.y2 >= clip_y && r.y2 <= clip_y2) {
+        if (clip.inside(Point{ r.x, r.y2 })) {
             auto& cell = cells_[r.y2 * width_ + r.x];
             cell.content = bl;
             cell.fg_color = color;
             cell.bg_color = bgcolor;
         }
         // Draw bottom-right corner
-        if (r.x2 >= clip_x && r.x2 <= clip_x2 && r.y2 >= clip_y && r.y2 <= clip_y2) {
+        if (clip.inside(Point{ r.x2, r.y2 })) {
             auto& cell = cells_[r.y2 * width_ + r.x2];
             cell.content = br;
             cell.fg_color = color;
@@ -357,14 +384,14 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
         }
 
         // Draw top and bottom horizontal lines (excluding corners)
-        for (int x = std::max(r.x + 1, clip_x); x < r.x2 && x <= clip_x2; x++) {
-            if (r.y >= clip_y && r.y <= clip_y2) {
+        for (int x = std::max(r.x + 1, clip.x); x < r.x2 && x <= clip.x2; x++) {
+            if (r.y >= clip.y && r.y <= clip.y2) {
                 auto& cell = cells_[r.y * width_ + x];
                 cell.content = h_line;
                 cell.fg_color = color;
                 cell.bg_color = bgcolor;
             }
-            if (r.y2 >= clip_y && r.y2 <= clip_y2) {
+            if (r.y2 >= clip.y && r.y2 <= clip.y2) {
                 auto& cell = cells_[r.y2 * width_ + x];
                 cell.content = h_line;
                 cell.fg_color = color;
@@ -373,14 +400,14 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
         }
 
         // Draw left and right vertical lines (excluding corners)
-        for (int y = std::max(r.y + 1, clip_y); y < r.y2 && y <= clip_y2; y++) {
-            if (r.x >= clip_x && r.x <= clip_x2) {
+        for (int y = std::max(r.y + 1, clip.y); y < r.y2 && y <= clip.y2; y++) {
+            if (r.x >= clip.x && r.x <= clip.x2) {
                 auto& cell = cells_[y * width_ + r.x];
                 cell.content = v_line;
                 cell.fg_color = color;
                 cell.bg_color = bgcolor;
             }
-            if (r.x2 >= clip_x && r.x2 <= clip_x2) {
+            if (r.x2 >= clip.x && r.x2 <= clip.x2) {
                 auto& cell = cells_[y * width_ + r.x2];
                 cell.content = v_line;
                 cell.fg_color = color;
@@ -393,8 +420,8 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
     int fill_x_start = (style == BorderStyle_None) ? r.x : r.x + 1;
     int fill_y_end   = (style == BorderStyle_None) ? r.y2 : r.y2 - 1;
     int fill_x_end   = (style == BorderStyle_None) ? r.x2 : r.x2 - 1;
-    for (int y = std::max(fill_y_start, clip_y); y <= fill_y_end && y <= clip_y2; y++) {
-        for (int x = std::max(fill_x_start, clip_x); x <= fill_x_end && x <= clip_x2; x++) {
+    for (int y = std::max(fill_y_start, clip.y); y <= fill_y_end && y <= clip.y2; y++) {
+        for (int x = std::max(fill_x_start, clip.x); x <= fill_x_end && x <= clip.x2; x++) {
             auto& cell = cells_[y * width_ + x];
             cell.content = " ";
             cell.bg_color = bgcolor;
@@ -404,6 +431,12 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
 
 void DrawBuffer::ScrollBar(const Point& pos, int length, int offset, int content_length, bool vertical, const Color& track_color, const Color& thumb_color)
 {
+    // Apply clip region
+    Rect clip = { 0,0,width_ - 1, height_ - 1 };
+    if (!clips_.empty()) {
+        clip = clip.intersect(clips_.back());
+    }
+
     int max_scroll = content_length - length;
     int thumb_size = std::max(1, length * length / content_length);
     int thumb_pos = (int)((float)offset / max_scroll * (length - thumb_size));
@@ -411,14 +444,30 @@ void DrawBuffer::ScrollBar(const Point& pos, int length, int offset, int content
     for (int i = 0; i < length; ++i) {
         bool is_thumb = (i >= thumb_pos && i < thumb_pos + thumb_size);
         if (vertical) {
-            auto& cell = cells_[(pos.y + i) * width_ + pos.x];
-            cell.content = " ";
-            cell.bg_color = is_thumb ? thumb_color : track_color;
+            int cy = pos.y + i;
+            if (!clip.inside(Point{ pos.x, cy }))
+                continue;
+            auto& cell = cells_[cy * width_ + pos.x];
+            if (is_thumb) {
+                cell.content = u8"\u2588";  // █ Full Block
+                cell.fg_color = thumb_color;
+            } else {
+                cell.content = u8"\u2588";
+                cell.fg_color = track_color;
+            }
         }
         else {
-            auto& cell = cells_[pos.y * width_ + pos.x + i];
-            cell.content = u8"\u2584";
-            cell.fg_color = is_thumb ? thumb_color : track_color;
+            int cx = pos.x + i;
+            if (!clip.inside(Point{cx, pos.y}))
+                continue;
+            auto& cell = cells_[pos.y * width_ + cx];
+            if (is_thumb) {
+                cell.content = u8"\u2584";  // half Block
+                cell.fg_color = thumb_color;
+            } else {
+                cell.content = u8"\u2584";
+                cell.fg_color = track_color;
+            }
         }
     }
 }
@@ -648,6 +697,7 @@ void Terminal::event_thread()
     while (s_running.load()) {
         ReadConsoleInputW(hIn, &rec, 1, &count);
         if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown) {
+            // TODO 
         }
         else if (rec.EventType == MOUSE_EVENT) {
             Event ev;
@@ -726,7 +776,7 @@ Point Terminal::GetSize()
 
 void Terminal::event_thread()
 {
-
+    //TODO
 }
 
 #endif
@@ -839,7 +889,7 @@ bool EditLine::tok_bool(std::string delims)
 }
 
 /// <summary>
-/// 
+///
 /// </summary>
 
 std::string ParseText(const std::string& t)
@@ -925,7 +975,6 @@ bool Win::Parse(EditLine& el)
     std::string cmd = el.next_tok();
     while (!cmd.empty()) {
         if (cmd[0] == '#') {
-
         }
         else if (cmd.length() >= 2 && (cmd[0] == '/' && cmd[1] == '/')) {
         }
@@ -1199,9 +1248,10 @@ Check::Check(Mgr* mgr) : Button(mgr) {
 
 void Check::PaintText(DrawBuffer& drawbuf)
 {
-    int mark_start = 3;
-    drawbuf.Text((checked) ? u8"✅" : u8"🔳", { clip.x, clip.y }, AnsiColor_Bright_White);    
-    //drawbuf.Text((checked) ? "[x]" : "[ ]", { clip.x, clip.y }, AnsiColor_White);
+    std::string checkmark = (checked) ? u8"✅" : u8"🔳";
+    //std::string checkmark = (checked) ? "[x]" : "[ ]";
+    int mark_start = utf8_width(checkmark) + 1;
+    drawbuf.Text(checkmark, { clip.x, clip.y }, AnsiColor_Bright_White);
     if (!text.empty()) {
         int tx = clip.x + mark_start;
         switch (text_algn) {
@@ -1257,6 +1307,25 @@ void Slider::CalRect(Win* parent)
     else {
         clip.y2--;
     }
+    content_length = 0;
+    if (is_vertical) {
+        for (auto ch : child) {
+            content_length = std::max(content_length, ch->local.y2 + 1);
+        }
+        if (content_length < clip.height()) {
+            content_length = clip.height();
+        }
+        scroll_max = content_length - clip.height();
+    }
+    else {
+        for (auto ch : child) {
+            content_length = std::max(content_length, ch->local.x2 + 1);
+        }
+        if (content_length < clip.width()) {
+            content_length = clip.width();
+        }
+        scroll_max = content_length - clip.width();
+    }
 
 }
 
@@ -1266,28 +1335,82 @@ void Slider::Paint(DrawBuffer& drawbuf)
     PaintScrollBar(drawbuf);
     PaintChild(drawbuf);
 }
+
 void Slider::PaintScrollBar(DrawBuffer& drawbuf)
-{
+{   
     if (is_vertical) {
-        drawbuf.ScrollBar({ clip.x2 + 1, clip.y }, clip.height(), scroll_value, clip.height() + 20, is_vertical,
+        drawbuf.ScrollBar({ clip.x2 + 1, clip.y }, clip.height(), scroll_value, content_length, is_vertical,
+            track_color, thumb_color);
+    }
+    else {
+        drawbuf.ScrollBar({ clip.x, clip.y2 + 1 }, clip.width(), scroll_value, content_length, is_vertical,
             track_color, thumb_color);
     }
 }
 
 void Slider::Event(const TUI::Event& ev)
 {
+    if (mgr->hover_slider_ != this)
+        return;
+    bool any_click = ev.any_click();
+
+    if (any_click) {
+        int max_scroll = content_length - clip.height();
+        if (max_scroll <= 0)
+            return;
+        Point pt = { ev.x, ev.y };
+        int thumb_size = std::max(1, clip.height() * clip.height() / content_length);
+        int thumb_pos = (int)((float)scroll_value / max_scroll * (clip.height() - thumb_size));
+
+        if (is_vertical) {
+            Rect scrollbar = { clip.x2 + 1, clip.y, clip.x2 + 1, clip.y2 };
+            // Vertical scrollbar at x=clip.x2+1, y=[clip.y .. clip.y+length-1]
+            if (scrollbar.inside(pt)) {
+                int click_offset = ev.y - clip.y;
+                if (click_offset < thumb_pos) {
+                    // Click above thumb — scroll up by one page
+                    scroll_value = std::max(0, scroll_value - clip.height());
+                }
+                else if (click_offset >= thumb_pos + thumb_size) {
+                    // Click below thumb — scroll down by one page
+                    scroll_value = std::min(scroll_max, scroll_value + clip.height());
+                }
+                mgr->is_dirty = true;
+            }
+        } else {
+            Rect scrollbar = { clip.x, clip.y2 + 1, clip.x2, clip.y2 + 1 };
+            // Horizontal scrollbar at y=clip.y2+1, x=[clip.x .. clip.x+length-1]
+            if (scrollbar.inside(pt)) {
+                int click_offset = ev.x - clip.x;
+                max_scroll = content_length - clip.width();
+                thumb_size = std::max(1, clip.width() * clip.width() / content_length);
+                thumb_pos = (int)((float)scroll_value / max_scroll * (clip.width() - thumb_size));
+                if (click_offset < thumb_pos) {
+                    scroll_value = std::max(0, scroll_value - clip.width());
+                } else if (click_offset >= thumb_pos + thumb_size) {
+                    scroll_value = std::min(scroll_max, scroll_value + clip.width());
+                }
+                mgr->is_dirty = true;
+            }
+        }
+    }
+
     switch (ev.button) {
     case 4:
-        scroll_value--;
-        if (scroll_value < 0) scroll_value = 0;
+        if (scroll_value > 0) {
+            scroll_value--;
+            mgr->is_dirty = true;
+        }
         break;
     case 5:
-        scroll_value++;
+        if (scroll_value < scroll_max) {
+            scroll_value++;
+            mgr->is_dirty = true;
+        }
         break;
     default:
         return;
     }
-    mgr->is_dirty = true;
 }
 
 Point Slider::GetClipPos() const
@@ -1296,6 +1419,12 @@ Point Slider::GetClipPos() const
         return { clip.x, clip.y - scroll_value };
     return { clip.x - scroll_value, clip.y };
 }
+
+///
+/// Edit
+///
+
+// TODO
 
 /// <summary>
 /// Mgr
@@ -1388,7 +1517,7 @@ bool Mgr::Update(Terminal& terminal)
                 notify_->Event(ev);
             }
             hover_slider_ = GetSlider(pt);
-            if (hover_slider_ && hover_slider_ != notify_) {
+            if (hover_slider_) {
                 hover_slider_->Event(ev);
             }
         }
@@ -1398,7 +1527,7 @@ bool Mgr::Update(Terminal& terminal)
 void Mgr::Paint(DrawBuffer& drawbuf)
 {
     Win::Paint(drawbuf);
-    is_dirty = false;    
+    is_dirty = false;
 }
 
 NAMESPACE_END

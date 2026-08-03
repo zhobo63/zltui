@@ -245,6 +245,8 @@ struct Event
     bool shift = false;
     bool ctrl = false;
     bool alt = false;
+
+    bool any_click() const { return type == EventType_Mouse && button >= 1 && button <= 3; }
 };
 
 class Terminal
@@ -408,6 +410,8 @@ struct Slider : Win
 
     bool is_vertical = true;
     int scroll_value = 0;
+    int scroll_max = 0;
+    int content_length = 0;
     Color track_color = COLOR_TRACK;
     Color thumb_color = COLOR_THUMB;
 };

@@ -47,6 +47,22 @@ Object Slider
         Rect 0 3 12 3
         Text Check
     }
+    Object Slider
+    {
+        Name slider2
+        Rect 0 20 29 30
+        DrawBorder true
+        bgColor RGB(40,60,80)
+        Vertical false
+
+        Object Label
+        {
+            Name label2
+            Rect 0 0 80 1
+            Text 這是🔥🔳 label 隨著螢幕大小自動縮放「內部零件」或「裡面的一部分」
+        }
+
+    }
 }
     )");
     auto size = terminal.GetSize();
