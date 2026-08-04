@@ -805,10 +805,43 @@ Point Terminal::GetSize()
             csbi.srWindow.Bottom - csbi.srWindow.Top + 1 };
 }
 
+// Combine a UTF-16 surrogate pair into a single codepoint.
+// Returns the combined codepoint, or 0 if `ch` is not a high surrogate.
+static uint32_t combine_surrogate(uint16_t hi, uint16_t lo)
+{
+    return 0x10000 + (static_cast<uint32_t>(hi - 0xD800) << 10) + (lo - 0xDC00);
+}
+
+// Per-thread state for buffering high surrogates.
+static thread_local uint16_t s_pending_hi = 0;
+
 static uint32_t map_key_event(const KEY_EVENT_RECORD& key)
 {
     if (key.uChar.UnicodeChar != 0 && !(key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED | LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED))) {
-        return static_cast<uint32_t>(key.uChar.UnicodeChar);
+        uint16_t ch = key.uChar.UnicodeChar;
+
+        // High surrogate — buffer it for the next event
+        if (ch >= 0xD800 && ch <= 0xDBFF) {
+            s_pending_hi = ch;
+            return 0; // don't emit yet
+        }
+
+        // Low surrogate — combine with pending high surrogate
+        if (ch >= 0xDC00 && ch <= 0xDFFF && s_pending_hi != 0) {
+            uint32_t cp = combine_surrogate(s_pending_hi, ch);
+            s_pending_hi = 0;
+            return cp;
+        }
+
+        // Lone low surrogate — discard stale high surrogate
+        if (ch >= 0xDC00 && ch <= 0xDFFF) {
+            s_pending_hi = 0;
+            return 0;
+        }
+
+        // Normal BMP character — flush any pending surrogate
+        s_pending_hi = 0;
+        return static_cast<uint32_t>(ch);
     }
 
     switch (key.wVirtualKeyCode) {
@@ -2016,9 +2049,12 @@ void Edit::Event(const TUI::Event& ev)
         int cur_idx = cur_idx_of();
         bool handled = true;
 
-        // Printable ASCII — insert at cursor (replace selection first if active)
-        if (ev.key >= 32 && ev.key < 127) {
-            char ch = static_cast<char>(ev.key);
+        // Printable character — insert at cursor (replace selection first if active)
+        if (ev.key >= 32 && ev.key < 0x10FFFF) {
+            char utf8_buf[4];
+            int n = utf8_wctomb(utf8_buf, static_cast<uint32_t>(ev.key));
+            std::string ch_str(utf8_buf, n);
+
             if (selected.start >= 0 && selected.end >= 0) {
                 int s = std::min(selected.start, selected.end);
                 int e = std::max(selected.start, selected.end);
@@ -2029,7 +2065,7 @@ void Edit::Event(const TUI::Event& ev)
                 cur_idx = s;
             }
             size_t off = byte_offset_of(cur_idx);
-            text.insert(off, 1, ch);
+            text.insert(off, ch_str);
             reparse();
             selected.unselect();
 
@@ -2038,7 +2074,8 @@ void Edit::Event(const TUI::Event& ev)
                 Point p = position[cur_idx];
                 cursor.set(p.x + chars[cur_idx].char_width, p.y);
             } else {
-                cursor.x++;
+                auto ch = Char::from_code(static_cast<uint32_t>(ev.key));
+                cursor.x += ch.char_width;
             }
         }
         // Special keys via ev.key
