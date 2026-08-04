@@ -149,10 +149,18 @@ struct Char {
         uint8_t code[4];
         uint32_t ch;
     };
+    char utf8[4];
     int size;
     int char_width;
 
     static Char from_code(uint32_t cp);
+};
+
+struct Selection {
+    int start = -1;
+    int end = -1;
+
+    bool is_selected(int pos) const { return start >= 0 && end >= 0 && pos >= start && pos <= end; }
 };
 
 struct Text {
@@ -165,6 +173,9 @@ struct Text {
     bool underline = false;
     int text_width = 0;
     int text_height = 0;
+
+    Selection selected;
+    Color color_selected;
 
     virtual void setText(const std::string& _text, int wrap = 0);
 };
@@ -210,6 +221,8 @@ struct DrawBuffer {
     void Text(const Point& pos, const TUI::Text& text, const Color& color = AnsiColor_White);
     void Border(const Rect& r, const Color& bgcolor, BorderStyle_ style = BorderStyle_Round, const Color& color = AnsiColor_Bright_White);
     void ScrollBar(const Point& pos, int length, int offset, int content_length, bool vertical, const Color& track_color = AnsiColor_White, const Color& thumb_color = AnsiColor_Bright_White);
+    void SetColor(const Point& pos, const Color& fgColor, const Color& bgColor);
+    void SetBgColor(const Point& pos, const Color& bgColor);
 };
 
 std::string CursorMove(int x, int y);
@@ -399,7 +412,7 @@ struct Win
     static Color COLOR_BTN;
     static Color COLOR_TRACK;
     static Color COLOR_THUMB;
-
+    static Color COLOR_SELECTED;
 };
 
 struct Label : Win, Text
@@ -451,15 +464,18 @@ struct Slider : Win
     int scroll_value = 0;
     int scroll_max = 0;
     int content_length = 0;
-    Color track_color = COLOR_TRACK;
-    Color thumb_color = COLOR_THUMB;
+    Color color_track = COLOR_TRACK;
+    Color color_thumb = COLOR_THUMB;
 };
 
 struct Edit : Slider, Text
 {
-    Edit(Mgr* mgr) :Slider(mgr) {}
+    Edit(Mgr* mgr);
 
+    void PaintText(DrawBuffer& drawbuf);
+    void Event(const TUI::Event& ev) override;
 
+    Point cursor;
 };
 
 struct Mgr : Win

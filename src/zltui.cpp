@@ -65,6 +65,35 @@ static int utf8_mbtowc(uint32_t& cp, const uint8_t* s, int len)
     }
 }
 
+static int utf8_wctomb(char buf[4], uint32_t cp)
+{
+    // reconstruct the UTF-8 bytes from the char
+    int l = 0;
+    if (cp < 0x80) {
+        buf[0] = static_cast<char>(cp);
+        l = 1;
+    }
+    else if (cp < 0x800) {
+        buf[0] = static_cast<char>(0xC0 | (cp >> 6));
+        buf[1] = static_cast<char>(0x80 | (cp & 0x3F));
+        l = 2;
+    }
+    else if (cp < 0x10000) {
+        buf[0] = static_cast<char>(0xE0 | (cp >> 12));
+        buf[1] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        buf[2] = static_cast<char>(0x80 | (cp & 0x3F));
+        l = 3;
+    }
+    else {
+        buf[0] = static_cast<char>(0xF0 | (cp >> 18));
+        buf[1] = static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+        buf[2] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        buf[3] = static_cast<char>(0x80 | (cp & 0x3F));
+        l = 4;
+    }
+    return l;
+}
+
 static int utf8_width(const std::string& text) {
     int text_width = 0;
     const uint8_t* p = reinterpret_cast<const uint8_t*>(text.data());
@@ -198,20 +227,13 @@ Char Char::from_code(uint32_t cp)
     Char c;
     c.ch = cp;
     c.char_width = utf8_char_width(cp);
-    if (cp < 0x80) {
-        c.size = 1;
-    }
-    else if (cp < 0x800) {
-        c.size = 2;
-    }
-    else if (cp < 0x10000) {
-        c.size = 3;
-    }
-    else {
-        c.size = 4;
-    }
+    c.size = utf8_wctomb(c.utf8, cp);
     return c;
 }
+
+/// <summary>
+/// Text
+/// </summary>
 
 void Text::setText(const std::string& _text, int wrap)
 {
@@ -360,30 +382,17 @@ void DrawBuffer::Text(const Point& pos, const TUI::Text& text, const Color& colo
             cell.bold = text.bold;
             cell.italic = text.italic;
             cell.underline = text.underline;
-            // reconstruct the UTF-8 bytes from the char
-            uint32_t cp = ch.ch;
-            std::string buf;
-            if (cp < 0x80) {
-                buf += static_cast<char>(cp);
+            cell.content = std::string((const char*)&ch.utf8, ch.size);
+            bool is_sel = text.selected.is_selected(i);
+            if (is_sel) {
+                cell.bg_color = text.color_selected;
             }
-            else if (cp < 0x800) {
-                buf += static_cast<char>(0xC0 | (cp >> 6));
-                buf += static_cast<char>(0x80 | (cp & 0x3F));
-            }
-            else if (cp < 0x10000) {
-                buf += static_cast<char>(0xE0 | (cp >> 12));
-                buf += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-                buf += static_cast<char>(0x80 | (cp & 0x3F));
-            }
-            else {
-                buf += static_cast<char>(0xF0 | (cp >> 18));
-                buf += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-                buf += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-                buf += static_cast<char>(0x80 | (cp & 0x3F));
-            }
-            cell.content = buf;
             if (cell.size > 1) {
-                cells_[cur_y * width_ + cur_x + 1].content = "";
+                auto& next_cell = cells_[cur_y * width_ + cur_x + 1];
+                next_cell.content = "";
+                if (is_sel) {
+                    next_cell.bg_color = text.color_selected;
+                }
             }
         }
     }
@@ -546,6 +555,31 @@ void DrawBuffer::ScrollBar(const Point& pos, int length, int offset, int content
             }
         }
     }
+}
+
+void DrawBuffer::SetColor(const Point& pos, const Color& fgColor, const Color& bgColor)
+{
+    Rect clip = { 0,0,width_ - 1, height_ - 1 };
+    if (!clips_.empty()) {
+        clip = clip.intersect(clips_.back());
+    }
+    if (!clip.inside(pos))
+        return;
+    auto& cell = cells_[pos.y * width_ + pos.x];
+    cell.fg_color = fgColor;
+    cell.bg_color = bgColor;
+}
+
+void DrawBuffer::SetBgColor(const Point& pos, const Color& bgColor)
+{
+    Rect clip = { 0,0,width_ - 1, height_ - 1 };
+    if (!clips_.empty()) {
+        clip = clip.intersect(clips_.back());
+    }
+    if (!clip.inside(pos))
+        return;
+    auto& cell = cells_[pos.y * width_ + pos.x];
+    cell.bg_color = bgColor;
 }
 
 /// <summary>
@@ -771,6 +805,22 @@ Point Terminal::GetSize()
             csbi.srWindow.Bottom - csbi.srWindow.Top + 1 };
 }
 
+static uint32_t map_key_event(const KEY_EVENT_RECORD& key)
+{
+    if (key.uChar.UnicodeChar != 0 && !(key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED | LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED))) {
+        return static_cast<uint32_t>(key.uChar.UnicodeChar);
+    }
+
+    switch (key.wVirtualKeyCode) {
+    case VK_ESCAPE: return 0x1B;
+    case VK_RETURN: return '\n';
+    case VK_BACK:   return '\b';
+    case VK_TAB:    return '\t';
+    case VK_SPACE:   return ' ';
+    default:        return static_cast<uint32_t>(key.wVirtualKeyCode);
+    }
+}
+
 void Terminal::event_thread()
 {
     INPUT_RECORD rec;
@@ -780,7 +830,20 @@ void Terminal::event_thread()
     while (s_running.load()) {
         ReadConsoleInputW(hIn, &rec, 1, &count);
         if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown) {
-            // TODO
+            Event ev;
+            ev.type = EventType_Key;
+            ev.key = map_key_event(rec.Event.KeyEvent);
+            ev.shift = (rec.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) != 0;
+            ev.ctrl = (rec.Event.KeyEvent.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
+            ev.alt = (rec.Event.KeyEvent.dwControlKeyState & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
+
+            if (ev.key != 0) {
+                std::lock_guard<std::mutex> lock(s_event_mutex);
+                const WORD repeat = rec.Event.KeyEvent.wRepeatCount ? rec.Event.KeyEvent.wRepeatCount : 1;
+                for (WORD i = 0; i < repeat; ++i) {
+                    s_events.push_back(ev);
+                }
+            }
         }
         else if (rec.EventType == MOUSE_EVENT) {
             Event ev;
@@ -1083,6 +1146,7 @@ Color Win::COLOR_DOWN(90, 90, 90);
 Color Win::COLOR_BTN(50, 50, 50);
 Color Win::COLOR_TRACK(44, 44, 44);
 Color Win::COLOR_THUMB(159, 159, 159);
+Color Win::COLOR_SELECTED(120, 120, 120);
 
 bool Win::Parse(EditLine& el)
 {
@@ -1640,10 +1704,10 @@ bool Slider::ParseCmd(const std::string& cmd, EditLine& el)
         is_vertical = el.tok_bool();
     }
     else if (eqi(cmd, "TrackColor")) {
-        track_color = Color::Parse(el.tok());
+        color_track = Color::Parse(el.tok());
     }
     else if (eqi(cmd, "ThumbColor")) {
-        thumb_color = Color::Parse(el.tok());
+        color_thumb = Color::Parse(el.tok());
     }
     else if (Win::ParseCmd(cmd, el)) {
     }
@@ -1695,11 +1759,11 @@ void Slider::PaintScrollBar(DrawBuffer& drawbuf)
 {
     if (is_vertical) {
         drawbuf.ScrollBar({ clip.x2 + 1, clip.y }, clip.height(), scroll_value, content_length, is_vertical,
-            track_color, thumb_color);
+            color_track, color_thumb);
     }
     else {
         drawbuf.ScrollBar({ clip.x, clip.y2 + 1 }, clip.width(), scroll_value, content_length, is_vertical,
-            track_color, thumb_color);
+            color_track, color_thumb);
     }
 }
 
@@ -1779,7 +1843,38 @@ Point Slider::GetClipPos() const
 /// Edit
 ///
 
-// TODO
+Edit::Edit(Mgr* mgr) :Slider(mgr) {
+    color_selected = COLOR_SELECTED;
+}
+
+void Edit::PaintText(DrawBuffer& drawbuf)
+{
+    if (!text.empty()) {
+        int tx = clip.x;
+        int ty = clip.y;
+        drawbuf.Text({ tx, ty }, *this, fg_color);
+    }
+    if (mgr->notify_ == this) {
+        int cx = clip.x + cursor.x;
+        int cy = clip.y + cursor.y;
+        drawbuf.SetBgColor({ cx,cy }, Color(200, 200, 200));
+    }
+}
+
+void Edit::Event(const TUI::Event& ev)
+{
+    if (mgr->notify_ != this)
+        return;
+    if (ev.type == EventType_Mouse) {
+        Point pt = { ev.x, ev.y };
+        //TODO get cursor , selection
+
+        mgr->is_dirty = true;
+    }
+    else if (ev.type == EventType_Key) {
+    
+    }
+}
 
 /// <summary>
 /// Mgr
@@ -1832,6 +1927,13 @@ bool Mgr::Update(Terminal& terminal)
     Terminal::GetEvent(events);
 
     for (auto& ev : events) {
+        if (ev.type == EventType_Key) {
+            if (notify_) {
+                notify_->Event(ev);
+            }
+            is_dirty = true;
+            continue;
+        }
         if (ev.type == EventType_Mouse) {
             Point pt = { ev.x, ev.y };
             bool any_down = ev.button >= 1 && ev.button <= 3;
