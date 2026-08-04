@@ -1861,6 +1861,13 @@ bool Edit::ParseCmd(const std::string& cmd, EditLine& el)
     return ret;
 }
 
+void Edit::Paint(DrawBuffer& drawbuf)
+{
+    PaintBorder(drawbuf);
+    PaintText(drawbuf);
+    PaintChild(drawbuf);
+}
+
 void Edit::PaintText(DrawBuffer& drawbuf)
 {
     if (!text.empty()) {
@@ -1886,14 +1893,251 @@ void Edit::Event(const TUI::Event& ev)
 {
     if (mgr->notify_ != this)
         return;
+
+    // Helper: find char index at display position (relative to clip origin)
+    auto char_at = [&](int lx, int ly) -> int {
+        int best_idx = -1;
+        for (size_t i = 0; i < chars.size(); i++) {
+            if (position[i].y == ly && lx >= position[i].x) {
+                if (lx < position[i].x + chars[i].char_width)
+                    best_idx = static_cast<int>(i);
+                else
+                    best_idx = static_cast<int>(i) + 1;
+            }
+        }
+        // Handle empty lines or positions past all chars on a line
+        if (best_idx < 0) {
+            for (size_t i = 0; i < chars.size(); i++) {
+                if (position[i].y == ly) {
+                    best_idx = static_cast<int>(i);
+                    break;
+                }
+                if (position[i].y > ly) {
+                    best_idx = static_cast<int>(i);
+                    break;
+                }
+            }
+        }
+        if (best_idx < 0)
+            best_idx = static_cast<int>(chars.size());
+        return std::max(0, std::min(best_idx, static_cast<int>(chars.size())));
+    };
+
+    // Helper: get display position from char index
+    auto pos_of = [&](int idx) -> Point {
+        if (idx >= 0 && idx < static_cast<int>(chars.size()))
+            return position[idx];
+        // Past end — compute position after last char on its line
+        if (!chars.empty() && idx > 0) {
+            int prev = idx - 1;
+            while (prev >= 0 && prev < static_cast<int>(chars.size())) {
+                Point p = position[prev];
+                p.x += chars[prev].char_width;
+                return p;
+            }
+        }
+        return {};
+    };
+
+    // Helper: get byte offset of char index in the string
+    auto byte_offset_of = [&](int idx) -> size_t {
+        size_t off = 0;
+        for (int i = 0; i < idx && i < static_cast<int>(chars.size()); i++)
+            off += chars[i].size;
+        return off;
+    };
+
+    // Helper: find current char index from cursor position
+    auto cur_idx_of = [&]() -> int {
+        for (size_t i = 0; i < chars.size(); i++) {
+            if (position[i].x == cursor.x && position[i].y == cursor.y)
+                return static_cast<int>(i);
+        }
+        // Cursor may be past the last char on a line
+        for (int i = 0; i <= static_cast<int>(chars.size()); i++) {
+            Point p = pos_of(i);
+            if (p.x == cursor.x && p.y == cursor.y)
+                return i;
+        }
+        return 0;
+    };
+
+    // Helper: reparse text without clearing selection
+    auto reparse = [&]() {
+        Selection sel = selected;
+        Text::setText(text, local.width());
+        selected = sel;
+    };
+
     if (ev.type == EventType_Mouse) {
         Point pt = { ev.x, ev.y };
-        //TODO get cursor , selection
 
+        if (!clip.inside(pt)) {
+            mgr->is_dirty = true;
+            return;
+        }
+
+        int lx = ev.x - clip.x;
+        int ly = ev.y - clip.y;
+        int idx = char_at(lx, ly);
+
+        if (ev.shift && selected.start >= 0) {
+            // Extend selection to clicked position
+            selected.end = idx;
+        } else if (ev.clicks == 2 && ev.button == 1) {
+            // Double-click: select word at clicked position
+            int start = idx, end = idx;
+            size_t text_len = text.size();
+            while (start > 0) {
+                size_t off = byte_offset_of(start - 1);
+                if (off >= text_len || std::isspace(static_cast<unsigned char>(text[off]))) break;
+                start--;
+            }
+            while (end < static_cast<int>(chars.size())) {
+                size_t off = byte_offset_of(end);
+                if (off >= text_len || std::isspace(static_cast<unsigned char>(text[off]))) break;
+                end++;
+            }
+            selected.start = start;
+            selected.end = end;
+        } else {
+            // Single click: move cursor, clear selection unless clicking within it
+            if (!selected.is_selected(idx))
+                selected.unselect();
+        }
+        if (ev.any_click()) {
+            Point p = pos_of(idx);
+            cursor.set(p.x, p.y);
+        }
         mgr->is_dirty = true;
     }
     else if (ev.type == EventType_Key) {
-        //TODO 
+        int cur_idx = cur_idx_of();
+        bool handled = true;
+
+        // Printable ASCII — insert at cursor (replace selection first if active)
+        if (ev.key >= 32 && ev.key < 127) {
+            char ch = static_cast<char>(ev.key);
+            if (selected.start >= 0 && selected.end >= 0) {
+                int s = std::min(selected.start, selected.end);
+                int e = std::max(selected.start, selected.end);
+                size_t del_off = byte_offset_of(s);
+                size_t del_len = byte_offset_of(e) - del_off;
+                text.erase(del_off, del_len);
+                reparse();
+                cur_idx = s;
+            }
+            size_t off = byte_offset_of(cur_idx);
+            text.insert(off, 1, ch);
+            reparse();
+            selected.unselect();
+
+            // Move cursor after inserted character
+            if (cur_idx < static_cast<int>(chars.size())) {
+                Point p = position[cur_idx];
+                cursor.set(p.x + chars[cur_idx].char_width, p.y);
+            } else {
+                cursor.x++;
+            }
+        }
+        else switch (ev.key) {
+        case '\b': { // Backspace
+            if (selected.start >= 0 && selected.end >= 0) {
+                int s = std::min(selected.start, selected.end);
+                int e = std::max(selected.start, selected.end);
+                size_t del_off = byte_offset_of(s);
+                size_t del_len = byte_offset_of(e) - del_off;
+                text.erase(del_off, del_len);
+                reparse();
+                cur_idx = s;
+                selected.unselect();
+            } else if (cur_idx > 0) {
+                int prev = cur_idx - 1;
+                size_t off = byte_offset_of(prev);
+                text.erase(off, chars[prev].size);
+                reparse();
+                cur_idx--;
+            }
+            Point p = pos_of(cur_idx);
+            cursor.set(p.x, p.y);
+            break;
+        }
+        case '\n': { // Enter — insert newline
+            if (selected.start >= 0 && selected.end >= 0) {
+                int s = std::min(selected.start, selected.end);
+                int e = std::max(selected.start, selected.end);
+                size_t del_off = byte_offset_of(s);
+                size_t del_len = byte_offset_of(e) - del_off;
+                text.erase(del_off, del_len);
+                cur_idx = s;
+                selected.unselect();
+            }
+            size_t off = byte_offset_of(cur_idx);
+            text.insert(off, 1, '\n');
+            reparse();
+            cursor.set(0, cursor.y + 1);
+            break;
+        }
+        default: {
+            if (ev.key == VK_LEFT) {
+                if (cur_idx > 0) {
+                    cur_idx--;
+                    Point p = position[cur_idx];
+                    cursor.set(p.x, p.y);
+                }
+            } else if (ev.key == VK_RIGHT) {
+                if (cur_idx < static_cast<int>(chars.size())) {
+                    Point p = pos_of(cur_idx + 1);
+                    cursor.set(p.x, p.y);
+                }
+            } else if (ev.key == VK_UP) {
+                int target_y = cursor.y - 1;
+                if (target_y >= 0) {
+                    for (size_t i = 0; i < chars.size(); i++) {
+                        if (position[i].y == target_y && position[i].x <= cursor.x)
+                            cur_idx = static_cast<int>(i);
+                    }
+                    Point p = pos_of(cur_idx >= 0 ? cur_idx : 0);
+                    cursor.set(p.x, p.y);
+                }
+            } else if (ev.key == VK_DOWN) {
+                int target_y = cursor.y + 1;
+                for (size_t i = 0; i < chars.size(); i++) {
+                    if (position[i].y == target_y && position[i].x <= cursor.x)
+                        cur_idx = static_cast<int>(i);
+                }
+                Point p = pos_of(cur_idx >= 0 ? cur_idx : static_cast<int>(chars.size()));
+                cursor.set(p.x, p.y);
+            } else if (ev.key == VK_HOME) {
+                // Go to start of current line
+                int target_y = cursor.y;
+                for (size_t i = 0; i < chars.size(); i++) {
+                    if (position[i].y == target_y && position[i].x == 0) {
+                        cur_idx = static_cast<int>(i);
+                        break;
+                    }
+                }
+                cursor.set(0, target_y);
+            } else if (ev.key == VK_END) {
+                // Go to end of current line
+                int target_y = cursor.y;
+                for (int i = static_cast<int>(chars.size()) - 1; i >= 0; i--) {
+                    if (position[i].y == target_y) {
+                        cur_idx = i + 1;
+                        break;
+                    }
+                }
+                Point p = pos_of(cur_idx);
+                cursor.set(p.x, p.y);
+            } else {
+                handled = false;
+            }
+            break;
+        }
+        }
+
+        if (handled)
+            mgr->is_dirty = true;
     }
 }
 
