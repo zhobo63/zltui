@@ -250,6 +250,7 @@ struct Event
 {
     EventType_ type = EventType_None;
     uint32_t key = 0;
+    uint32_t vkey = 0;
     // button: 1=left, 2=right, 3=middle, 4=scroll up, 5=scroll down, 6=h-scroll left, 7=h-scroll right
     int button = 0;
     int x = 0;

@@ -812,12 +812,12 @@ static uint32_t map_key_event(const KEY_EVENT_RECORD& key)
     }
 
     switch (key.wVirtualKeyCode) {
-    case VK_ESCAPE: return 0x1B;
-    case VK_RETURN: return '\n';
-    case VK_BACK:   return '\b';
-    case VK_TAB:    return '\t';
+    case VK_ESCAPE:  return 0x1B;
+    case VK_RETURN:  return '\n';
+    case VK_BACK:    return '\b';
+    case VK_TAB:     return '\t';
     case VK_SPACE:   return ' ';
-    default:        return static_cast<uint32_t>(key.wVirtualKeyCode);
+    default:         return 0; // navigation/function keys — use vkey instead
     }
 }
 
@@ -832,12 +832,13 @@ void Terminal::event_thread()
         if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown) {
             Event ev;
             ev.type = EventType_Key;
+            ev.vkey = rec.Event.KeyEvent.wVirtualKeyCode;
             ev.key = map_key_event(rec.Event.KeyEvent);
             ev.shift = (rec.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) != 0;
             ev.ctrl = (rec.Event.KeyEvent.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
             ev.alt = (rec.Event.KeyEvent.dwControlKeyState & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
 
-            if (ev.key != 0) {
+            if (ev.key != 0 || ev.vkey != 0) {
                 std::lock_guard<std::mutex> lock(s_event_mutex);
                 const WORD repeat = rec.Event.KeyEvent.wRepeatCount ? rec.Event.KeyEvent.wRepeatCount : 1;
                 for (WORD i = 0; i < repeat; ++i) {
@@ -2012,8 +2013,6 @@ void Edit::Event(const TUI::Event& ev)
         mgr->is_dirty = true;
     }
     else if (ev.type == EventType_Key) {
-        //BUG: del -> '.'
-
         int cur_idx = cur_idx_of();
         bool handled = true;
 
@@ -2042,8 +2041,8 @@ void Edit::Event(const TUI::Event& ev)
                 cursor.x++;
             }
         }
-        else switch (ev.key) {
-        case '\b': { // Backspace
+        // Special keys via ev.key
+        else if (ev.key == '\b') { // Backspace
             if (selected.start >= 0 && selected.end >= 0) {
                 int s = std::min(selected.start, selected.end);
                 int e = std::max(selected.start, selected.end);
@@ -2062,9 +2061,8 @@ void Edit::Event(const TUI::Event& ev)
             }
             Point p = pos_of(cur_idx);
             cursor.set(p.x, p.y);
-            break;
         }
-        case '\n': { // Enter — insert newline
+        else if (ev.key == '\n') { // Enter — insert newline
             if (selected.start >= 0 && selected.end >= 0) {
                 int s = std::min(selected.start, selected.end);
                 int e = std::max(selected.start, selected.end);
@@ -2078,64 +2076,78 @@ void Edit::Event(const TUI::Event& ev)
             text.insert(off, 1, '\n');
             reparse();
             cursor.set(0, cursor.y + 1);
-            break;
         }
-        default: {
-            if (ev.key == VK_LEFT) {
-                if (cur_idx > 0) {
-                    cur_idx--;
-                    Point p = position[cur_idx];
-                    cursor.set(p.x, p.y);
-                }
-            } else if (ev.key == VK_RIGHT) {
-                if (cur_idx < static_cast<int>(chars.size())) {
-                    Point p = pos_of(cur_idx + 1);
-                    cursor.set(p.x, p.y);
-                }
-            } else if (ev.key == VK_UP) {
-                int target_y = cursor.y - 1;
-                if (target_y >= 0) {
-                    for (size_t i = 0; i < chars.size(); i++) {
-                        if (position[i].y == target_y && position[i].x <= cursor.x)
-                            cur_idx = static_cast<int>(i);
-                    }
-                    Point p = pos_of(cur_idx >= 0 ? cur_idx : 0);
-                    cursor.set(p.x, p.y);
-                }
-            } else if (ev.key == VK_DOWN) {
-                int target_y = cursor.y + 1;
+        // Navigation / function keys via ev.vkey
+        else if (ev.vkey == VK_DELETE) { // Delete — remove char at cursor
+            if (selected.start >= 0 && selected.end >= 0) {
+                int s = std::min(selected.start, selected.end);
+                int e = std::max(selected.start, selected.end);
+                size_t del_off = byte_offset_of(s);
+                size_t del_len = byte_offset_of(e) - del_off;
+                text.erase(del_off, del_len);
+                reparse();
+                cur_idx = s;
+                selected.unselect();
+            } else if (cur_idx < static_cast<int>(chars.size())) {
+                size_t off = byte_offset_of(cur_idx);
+                text.erase(off, chars[cur_idx].size);
+                reparse();
+            }
+            Point p = pos_of(cur_idx);
+            cursor.set(p.x, p.y);
+        }
+        else if (ev.vkey == VK_LEFT) {
+            if (cur_idx > 0) {
+                cur_idx--;
+                Point p = position[cur_idx];
+                cursor.set(p.x, p.y);
+            }
+        } else if (ev.vkey == VK_RIGHT) {
+            if (cur_idx < static_cast<int>(chars.size())) {
+                Point p = pos_of(cur_idx + 1);
+                cursor.set(p.x, p.y);
+            }
+        } else if (ev.vkey == VK_UP) {
+            int target_y = cursor.y - 1;
+            if (target_y >= 0) {
                 for (size_t i = 0; i < chars.size(); i++) {
                     if (position[i].y == target_y && position[i].x <= cursor.x)
                         cur_idx = static_cast<int>(i);
                 }
-                Point p = pos_of(cur_idx >= 0 ? cur_idx : static_cast<int>(chars.size()));
+                Point p = pos_of(cur_idx >= 0 ? cur_idx : 0);
                 cursor.set(p.x, p.y);
-            } else if (ev.key == VK_HOME) {
-                // Go to start of current line
-                int target_y = cursor.y;
-                for (size_t i = 0; i < chars.size(); i++) {
-                    if (position[i].y == target_y && position[i].x == 0) {
-                        cur_idx = static_cast<int>(i);
-                        break;
-                    }
-                }
-                cursor.set(0, target_y);
-            } else if (ev.key == VK_END) {
-                // Go to end of current line
-                int target_y = cursor.y;
-                for (int i = static_cast<int>(chars.size()) - 1; i >= 0; i--) {
-                    if (position[i].y == target_y) {
-                        cur_idx = i + 1;
-                        break;
-                    }
-                }
-                Point p = pos_of(cur_idx);
-                cursor.set(p.x, p.y);
-            } else {
-                handled = false;
             }
-            break;
-        }
+        } else if (ev.vkey == VK_DOWN) {
+            int target_y = cursor.y + 1;
+            for (size_t i = 0; i < chars.size(); i++) {
+                if (position[i].y == target_y && position[i].x <= cursor.x)
+                    cur_idx = static_cast<int>(i);
+            }
+            Point p = pos_of(cur_idx >= 0 ? cur_idx : static_cast<int>(chars.size()));
+            cursor.set(p.x, p.y);
+        } else if (ev.vkey == VK_HOME) {
+            // Go to start of current line
+            int target_y = cursor.y;
+            for (size_t i = 0; i < chars.size(); i++) {
+                if (position[i].y == target_y && position[i].x == 0) {
+                    cur_idx = static_cast<int>(i);
+                    break;
+                }
+            }
+            cursor.set(0, target_y);
+        } else if (ev.vkey == VK_END) {
+            // Go to end of current line
+            int target_y = cursor.y;
+            for (int i = static_cast<int>(chars.size()) - 1; i >= 0; i--) {
+                if (position[i].y == target_y) {
+                    cur_idx = i + 1;
+                    break;
+                }
+            }
+            Point p = pos_of(cur_idx);
+            cursor.set(p.x, p.y);
+        } else {
+            handled = false;
         }
 
         if (handled)
