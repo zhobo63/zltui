@@ -46,7 +46,7 @@
 - **建议**: 考虑使用 `wcwidth()` (POSIX) 或集成 Unicode 宽度表。
 
 ### 14. Terminal::Render() — 差异渲染优化空间
-- **位置**: `Terminal::Render()` (L443)
+- **位置**: `Terminal::Render()`
 - **问题**:
   - 双缓冲对比机制已实现，但样式切换时可能产生冗余的 ANSI 序列
   - 没有批量合并同一行的相邻单元格更新
@@ -66,11 +66,6 @@
 - **位置**: `struct Win` (L317)
 - **问题**: 仅有 `on_click`，没有鼠标悬停/离开事件。
 - **建议**: 添加 `std::function<void()> on_hover;` 和 `on_leave`。
-
-### 18. Label — 多行文本支持不完整
-- **位置**: `Label::PaintText()` (L1126)
-- **问题**: 虽然 `DrawBuffer::Text()` 支持 `\n`，但 `text_width` 计算基于整个字符串（含换行），对齐逻辑不考虑多行。
-- **建议**: 按行拆分文本，逐行渲染并对齐。
 
 ### 23. Mgr::Create() — Edit 类型注册但无功能
 - **位置**: `Mgr::Create()` (L1304)

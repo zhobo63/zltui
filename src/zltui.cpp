@@ -1847,6 +1847,20 @@ Edit::Edit(Mgr* mgr) :Slider(mgr) {
     color_selected = COLOR_SELECTED;
 }
 
+bool Edit::ParseCmd(const std::string& cmd, EditLine& el)
+{
+    bool ret = true;
+    if (eqi(cmd, "Text")) {
+        setText(ParseText(el.tok_line()));
+    }
+    else if (Win::ParseCmd(cmd, el)) {
+    }
+    else {
+        ret = false;
+    }
+    return ret;
+}
+
 void Edit::PaintText(DrawBuffer& drawbuf)
 {
     if (!text.empty()) {
@@ -1861,6 +1875,13 @@ void Edit::PaintText(DrawBuffer& drawbuf)
     }
 }
 
+void Edit::setText(const std::string& _text)
+{
+    Text::setText(_text, local.width());
+    selected.unselect();
+    mgr->is_dirty = true;
+}
+
 void Edit::Event(const TUI::Event& ev)
 {
     if (mgr->notify_ != this)
@@ -1872,7 +1893,7 @@ void Edit::Event(const TUI::Event& ev)
         mgr->is_dirty = true;
     }
     else if (ev.type == EventType_Key) {
-    
+        //TODO 
     }
 }
 

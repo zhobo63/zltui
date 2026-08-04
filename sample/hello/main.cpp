@@ -129,7 +129,7 @@ Object Slider
 }
 
 # ── Input Bar (Bottom) ─────────────────────
-Object Label
+Object Edit
 {
     Name inputBar
     Rect 0 0 100 5

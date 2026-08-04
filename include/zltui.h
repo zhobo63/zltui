@@ -161,6 +161,7 @@ struct Selection {
     int end = -1;
 
     bool is_selected(int pos) const { return start >= 0 && end >= 0 && pos >= start && pos <= end; }
+    void unselect() { start = -1; end = -1; }
 };
 
 struct Text {
@@ -472,7 +473,9 @@ struct Edit : Slider, Text
 {
     Edit(Mgr* mgr);
 
+    bool ParseCmd(const std::string& cmd, EditLine& el) override;
     void PaintText(DrawBuffer& drawbuf);
+    void setText(const std::string& _text);
     void Event(const TUI::Event& ev) override;
 
     Point cursor;
