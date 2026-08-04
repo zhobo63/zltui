@@ -2000,7 +2000,7 @@ void Edit::Event(const TUI::Event& ev)
             }
             selected.start = start;
             selected.end = end;
-        } else {
+        } else if(ev.any_click()) {
             // Single click: move cursor, clear selection unless clicking within it
             if (!selected.is_selected(idx))
                 selected.unselect();
@@ -2012,6 +2012,8 @@ void Edit::Event(const TUI::Event& ev)
         mgr->is_dirty = true;
     }
     else if (ev.type == EventType_Key) {
+        //BUG: del -> '.'
+
         int cur_idx = cur_idx_of();
         bool handled = true;
 
