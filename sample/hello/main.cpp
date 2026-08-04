@@ -13,119 +13,138 @@ int main()
     TUI::Point pos;
     int offset = 0;
 
+// AI Agent UI Layout:
+// ┌───────────────────────────────────────────────┐
+// │ 🤖 AI Agent — gpt-4o | ████████░░ 82%        │ ← Title Bar (Dock_Top)
+// ├──────────────┬────────────────────────────────┤
+// │ Tools Panel  │ Chat / Output Area             │ ← Split: Left|Right
+// │ ✅ Read file │ [Agent]: Analyzing code...     │
+// │ ⏳ Edit file │ ┌──────────────┐               │
+// │ 🔧 Spawn ag. │ │  Code Block   │               │
+// │ 📊 Diags     │ └──────────────┘               │
+// │              │ [Agent]: Changes applied.      │
+// ├──────────────┴────────────────────────────────┤
+// │ > Type your message...                        │ ← Input (Dock_Down)
+// └───────────────────────────────────────────────┘
+
     TUI::Mgr mgr;
     mgr.Parse(u8R"(
-Object Slider 
+# ── Title Bar ──────────────────────────────
+Object Label
 {
-    Name pane1
+    Name titleBar
+    Rect 0 0 80 1
+    Dock right 0 0 100 100
+    Text 🤖 AI Agent — qwen3.6 | ████████░░ 82%
+    Bold true
+    FgColor BrightCyan
+}
+
+# ── Tools Panel (Left) ─────────────────────
+Object Slider
+{
+    Name toolsPanel
+    Rect 0 2 30 100
     DrawBorder true
-    FgColor RGB(0,250,250)
-    Rect 0 0 40 29
+    BorderStyle Single
+    Title Tools
+    Dock down 0 0 25 100
+    DockOffset 0 0 0 -5
+    FgColor BrightCyan
+    Arrange Content true
+
     Object Label
     {
-        Name label1
-        Rect 0 0 39 1
-        Text u8"這是🔥🔳 label\n隨著螢幕大小自動縮放「內部零件」或「裡面的一部分」"
-    }
-    Object Button
-    {
-        Name btn1
-        Rect 0 2 12 2
-        Text Button 1
+        Name toolRead
+        Rect 0 1 23 2
+        Text ✅ Read file
         FgColor BrightGreen
     }
-    Object Button
+    Object Label
     {
-        Name btn2
-        Rect 14 2 28 2
-        Text Button 2
-        FgColor BrightGreen
+        Name toolEdit
+        Rect 0 4 23 5
+        Text ⏳ Edit file\n    Applying changes...
+        FgColor Yellow
     }
-    Object Check
+    Object Label
     {
-        Name chk1
-        Rect 0 3 12 3
-        Text Check
+        Name toolSpawn
+        Rect 0 7 23 8
+        Text 🔧 Spawn agent
+        FgColor BrightCyan
+    }
+    Object Label
+    {
+        Name toolDiag
+        Rect 0 10 23 11
+        Text 📊 Diagnostics
+        FgColor White
+    }
+}
+
+# ── Chat / Output Area (Right) ─────────────
+Object Slider
+{
+    Name chatArea
+    Rect 31 2 100 100
+    DrawBorder true
+    BorderStyle Single
+    Title Output
+    Dock Right|Down 25 2 100 100
+    DockOffset 0 0 0 -5
+    Vertical true
+    BgColor RGB(30,30,40)
+
+    Object Label
+    {
+        Name agentMsg1
+        Rect 0 1 76 2
+        Text [Agent]: Analyzing codebase...
+        FgColor BrightCyan
     }
     Object Slider
     {
-        Name slider2
-        Rect 0 20 29 30
+        Name codeBlock
+        Rect 0 4 50 12
         DrawBorder true
-        bgColor RGB(40,60,80)
-        Vertical false
+        BorderStyle none
+        BgColor RGB(20,20,30)
 
         Object Label
         {
-            Name label2
-            Rect 0 0 80 1
-            Text 這是🔥🔳 label 隨著螢幕大小自動縮放「內部零件」或「裡面的一部分」
+            Name codeText
+            Rect 1 1 48 10
+            Text void foo() {\n    bar();\n}
+            FgColor BrightGreen
         }
-
+    }
+    Object Label
+    {
+        Name agentMsg2
+        Rect 0 15 76 16
+        Text [Agent]: Changes applied. Ready for next task.
+        FgColor White
     }
 }
+
+# ── Input Bar (Bottom) ─────────────────────
+Object Label
+{
+    Name inputBar
+    Rect 0 0 100 5
+    Dock top|right|down 0 100 100 100
+    DockOffset 0 -4 0 0
+    Text > Type your message...
+    FgColor BrightYellow
+}
     )");
-    auto size = terminal.GetSize();
-    //TUI::WinPtr pane1 = mgr.Create("Slider");
-    //pane1->name = "pane1";
-    //pane1->local.set(0, 0, 40, size.y - 1);
-    //pane1->draw_border = true;
-    //pane1->fg_color = TUI::Color(0, 250, 250);
-    //mgr.AddChild(pane1);
 
-    //std::shared_ptr<TUI::Label> label = std::shared_ptr<TUI::Label>(new TUI::Label(&mgr));
-    //label->name = "label1";
-    //label->local.set(0, 0, 39, 1);
-    //label->setText(u8"這是🔥🔳 label 隨著螢幕大小自動縮放「內部零件」或「裡面的一部分」");
-    //pane1->AddChild(label);
-
-    //std::shared_ptr<TUI::Button> btn = std::shared_ptr<TUI::Button>(new TUI::Button(&mgr));
-    //btn->name = "btn1";
-    //btn->local.set(0, 2, 12, 2);
-    //btn->setText("Button 1");
-    //btn->fg_color = TUI::AnsiColor_Bright_Green;
-    //pane1->AddChild(btn);
-
-    //btn->name = "btn2";
-    //btn = std::shared_ptr<TUI::Button>(new TUI::Button(&mgr));
-    //btn->local.set(14, 2, 28, 2);
-    //btn->setText("Button 2");
-    //btn->fg_color = TUI::AnsiColor_Bright_Green;
-    //pane1->AddChild(btn);
-
-    //std::shared_ptr<TUI::Check> chk = std::shared_ptr<TUI::Check>(new TUI::Check(&mgr));
-    //chk->name = "chk1";
-    //chk->local.set(0, 3, 12, 3);
-    //chk->setText("Check");
-    //pane1->AddChild(chk);
-
-    TUI::WinPtr pane2 = mgr.Create("Slider");
-    pane2->name = "pane2";
-    pane2->local.set(41, 0, size.x - 1, size.y - 1);
-    pane2->draw_border = true;
-    pane2->fg_color = TUI::Color(250, 0, 250);
-    mgr.AddChild(pane2);
-
-    
     while (!quit) {
-        auto size = terminal.GetSize();
-
         if (mgr.Update(terminal)) {
             auto& buf = terminal.GetDrawBuffer();
             buf.clear();
-
-            //buf.Border({ 1,0,10,5 }, TUI::Color(46,46,46));
-            //buf.Border({ 11,1,40,10 }, TUI::AnsiColor_Magenta, TUI::BorderStyle_Single);
-            //buf.Border({ 41,1,60,10 }, TUI::AnsiColor_Magenta, TUI::BorderStyle_Double);
-            //buf.Border({ 61,1,80,10 }, TUI::AnsiColor_Bright_Magenta, TUI::BorderStyle_None);
-            //offset = (offset + 1) % 100;
-            //buf.ScrollBar({ size.x - 1, 0 }, size.y - 1, offset, 100, true);
-            //buf.ScrollBar({ 0, size.y - 1 }, size.x - 1, offset, 200, false);
-            //buf.Text("hello", pos, col);
-            //buf.Text("hello", { 12,1 }, TUI::AnsiColor_White, true);
-
             mgr.Paint(buf);
-
             terminal.Render();
         }
         Sleep(10);

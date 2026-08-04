@@ -20,7 +20,26 @@ Dock & Arrange 是 zltui 的 TUI 佈局核心，採用兩層機制：
 │ │      │  │ [item1] [item2] [item3]                      │   │
 │ └──────┘  └──────────────────────────────────────────────┘   │
 │ [Status - Dock_Down]                                         │
-└──────────────────────────────┘
+└──────────────────────────────────────────────────────────────┘
+
+Header: pos(0,0) size(parent_width, 2)
+  Rect 0 0 2 2
+  Dock right 0 0 100 100
+
+Nav: pos(0,2) size(30, parent_height - 3 - 2)
+  Rect 0 2 30 30
+  Dock down 0 0 100 100
+  DockOffset 0 0 0 -3
+
+Main Area: pos(30, 2) size(parent_width - 30, parent_height - 3 - 2)
+  Rect 30 2 30 30
+  Dock right|down 0 0 100 100
+  DockOffset 0 0 -3 0
+  
+Status: pos(0, parent_height - 3) size(parent_width, 3)
+  Rect 0 0 30 3
+  Dock right|down 0 100 100 100
+  DockOffset 0 -3 0 0
 ```
 
 ## 運作流程
@@ -49,194 +68,338 @@ Mgr (root)
 
 ### 核心概念
 
-Dock 是位標記系統，支援組合錨定。計算順序：**Top → Left → Right → Down**。
+Dock 是**百分比錨定系統**，四邊（Left / Top / Right / Down）可獨立設定。
+每個錨定的邊緣會根據 `dock_.dock` rect 的四個值（以 **0–100 的百分比**）來決定該邊緣在父容器 clip 區域中的位置，再加上 `dock_.offset` 做像素級微調。
+
+未錨定的邊緣則保持 `local` rect 原有的相對位置。
+
+最終 `screen = local.move(pt.x, pt.y)`，將調整後的 local 座標轉換為 screen 座標。
+
+### dock_.dock 欄位含義
+
+| 字段 | 控制的邊 | 說明 |
+|---|---|---|
+| `dock_.dock.x`   | Left（當 `Dock_Left` 設定時） | 左邊緣在父容器寬度的百分比位置 |
+| `dock_.dock.y`   | Top（當 `Dock_Top` 設定時）  | 上邊緣在父容器高度的百分比位置 |
+| `dock_.dock.x2`  | Right（當 `Dock_Right` 設定時） | 右邊緣在父容器寬度的百分比位置 |
+| `dock_.dock.y2`  | Down（當 `Dock_Down` 設定時）  | 下邊緣在父容器高度的百分比位置 |
+
+### dock_.offset 欄位含義
+
+| 字段 | 說明 |
+|---|---|
+| `dock_.offset.x`   | Left 錨定後額外偏移的像素數 |
+| `dock_.offset.y`   | Top 錨定後額外偏移的像素數 |
+| `dock_.offset.x2`  | Right 錨定後額外偏移的像素數 |
+| `dock_.offset.y2`  | Down 錨定後額外偏移的像素數 |
 
 ### 計算規則
 
 #### Dock_None
-控件使用 `local` rect 的絕對位置，不做任何調整。
+不設定任何錨定旗標，控件使用 `local` rect 的原始位置。
 
 ```cpp
-// local = {10, 5, 30, 15} → screen = parent->clip + (10, 5)
+// screen = local.move(pt.x, pt.y) — 不做任何調整
 ```
 
-#### Dock_Top / Dock_Left / Dock_Right / Dock_Down（單邊錨定）
+#### Dock_Left / Dock_Top（單邊錨定）
 
-錨定的邊緣貼合父容器，對向邊緣由 `dock` rect 的尺寸決定。
+將對應邊緣固定在父容器 clip 區域的百分比位置上：
 
 ```cpp
-// Dock_Top: 貼頂部，高度固定
-screen.x   = parent_clip.x + offset.x;
-screen.y   = parent_clip.y + offset.y;
-screen.x2  = screen.x + dock.width() - 1;    // 寬度由 dock 決定
-screen.y2  = screen.y + dock.height() - 1;   // 高度由 dock 決定
+// Dock_Left: dock_.dock.x = 10 → 左邊緣在父容器寬度 10% 處
+if (dock_.mode & Dock_Left) {
+    local.x = pt.x + (pw - 1) * dock_.dock.x / 100 + dock_.offset.x;
+}
+// Dock_Top: dock_.dock.y = 5 → 上邊緣在父容器高度 5% 處
+if (dock_.mode & Dock_Top) {
+    local.y = pt.y + (ph - 1) * dock_.dock.y / 100 + dock_.offset.y;
+}
+```
+
+#### Dock_Right / Dock_Down（對向錨定）
+
+將對應邊緣固定在父容器 clip 區域的百分比位置上：
+
+```cpp
+// Dock_Right: dock_.dock.x2 = 90 → 右邊緣在父容器寬度 90% 處
+if (dock_.mode & Dock_Right) {
+    local.x2 = pt.x + (pw - 1) * dock_.dock.x2 / 100 + dock_.offset.x2;
+}
+// Dock_Down: dock_.dock.y2 = 95 → 下邊緣在父容器高度 95% 處
+if (dock_.mode & Dock_Down) {
+    local.y2 = pt.y + (ph - 1) * dock_.dock.y2 / 100 + dock_.offset.y2;
+}
 ```
 
 #### Dock_All（四邊錨定）
 
-填充父容器剩餘空間，扣除 offset。
+同時設定 `Dock_Left | Dock_Top | Dock_Right | Dock_Down`，四個邊緣都被百分比錨定。
+這相當於讓控件填滿由四個百分比所定義的區域：
 
 ```cpp
-screen.x   = parent_clip.x + offset.x;
-screen.y   = parent_clip.y + offset.y;
-screen.x2  = parent_clip.x2 - offset.x2;
-screen.y2  = parent_clip.y2 - offset.y2;
-```
-
-#### 組合錨定（如 Dock_Top | Dock_Left）
-
-錨定的邊緣貼合，未錨定的方向由 `dock` rect 的尺寸決定。
-
-```cpp
-// Dock_Top | Dock_Left: 貼左上角，寬度和高度由 dock 決定
-screen.x   = parent_clip.x + offset.x;
-screen.y   = parent_clip.y + offset.y;
-screen.x2  = screen.x + dock.width() - 1;
-screen.y2  = screen.y + dock.height() - 1;
-```
-
-### Dock 計算偽碼
-
-```cpp
-void Win::CalRectDock(Win* parent)
-{
-    Rect pc = parent ? parent->clip : local;  // parent clip area
-    Point pt = parent ? parent->GetClipPos() : Point{0, 0};
-
-    switch (dock.mode) {
-        case Dock_None:
-            screen = local.move(pt.x, pt.y);
-            break;
-
-        case Dock_All:
-            screen.set(
-                pc.x + dock.offset.x,
-                pc.y + dock.offset.y,
-                pc.x2 - dock.offset.x2,
-                pc.y2 - dock.offset.y2
-            );
-            break;
-
-        default:  // bit flags combination
-            // X position
-            if (dock.mode & Dock_Left)
-                screen.x = pc.x + dock.offset.x;
-            else if (dock.mode & Dock_Right)
-                screen.x = pc.x2 - dock.width() + 1 - dock.offset.x2;
-            else
-                screen.x = pt.x + local.x;  // use local position
-
-            // Y position
-            if (dock.mode & Dock_Top)
-                screen.y = pc.y + dock.offset.y;
-            else if (dock.mode & Dock_Down)
-                screen.y = pc.y2 - dock.height() + 1 - dock.offset.y2;
-            else
-                screen.y = pt.y + local.y;  // use local position
-
-            // Size: anchored edges stretch, unanchored edges use dock size
-            if (dock.mode & Dock_Right)
-                screen.x2 = pc.x2 - dock.offset.x2;
-            else
-                screen.x2 = screen.x + dock.width() - 1;
-
-            if (dock.mode & Dock_Down)
-                screen.y2 = pc.y2 - dock.offset.y2;
-            else
-                screen.y2 = screen.y + dock.height() - 1;
-    }
+// 例如: dock_.dock = {10, 5, 90, 95}
+// → 左邊在 10%、上邊在 5%、右邊在 90%、下邊在 95%
+if (dock_.mode & Dock_Left) {
+    local.x = pt.x + (pw - 1) * 10 / 100;
+}
+if (dock_.mode & Dock_Top) {
+    local.y = pt.y + (ph - 1) * 5 / 100;
+}
+if (dock_.mode & Dock_Right) {
+    local.x2 = pt.x + (pw - 1) * 90 / 100;
+}
+if (dock_.mode & Dock_Down) {
+    local.y2 = pt.y + (ph - 1) * 95 / 100;
 }
 ```
 
-### Offset 的意義
+#### 組合錨定（如 Dock_Left | Dock_Top）
 
-`offset` 是 `Rect` 類型，四邊各一個值：
-
-| 字段 | 含義 |
-|---|---|
-| `offset.x`   | 左側內縮（Dock_Left / Dock_All 時有效） |
-| `offset.y`   | 頂部內縮（Dock_Top / Dock_All 時有效） |
-| `offset.x2`  | 右側內縮（Dock_Right / Dock_All 時有效） |
-| `offset.y2`  | 底部內縮（Dock_Down / Dock_All 時有效） |
+只錨定左邊和上邊，右邊和下邊保持 `local` rect 的原始尺寸：
 
 ```cpp
-// Dock_All with offset = {5, 3, 5, 3} → 四邊各留 5/3 格空白
-screen.x   = pc.x + 5;
-screen.y   = pc.y + 3;
-screen.x2  = pc.x2 - 5;
-screen.y2  = pc.y2 - 3;
+// Dock_Left | Dock_Top: 左上角固定在百分比位置，寬高由 local 決定
+if (dock_.mode & Dock_Left) {
+    local.x = pt.x + (pw - 1) * dock_.dock.x / 100;
+}
+if (dock_.mode & Dock_Top) {
+    local.y = pt.y + (ph - 1) * dock_.dock.y / 100;
+}
+// Right/Down 未設定 → local.x2 / local.y2 不變
+```
+
+### Dock 計算流程（實際程式碼）
+
+```cpp
+void Win::CalRect(Win* parent)
+{
+    Point pt = { 0, 0 };
+    int pw = local.width();
+    int ph = local.height();
+    if (parent) {
+        pt = parent->GetClipPos();   // 父容器 clip 左上角
+        pw = parent->clip.width();   // 父容器可用寬度
+        ph = parent->clip.height();  // 父容器可用高度
+    }
+
+    // ── Stage 1: Dock（百分比錨定）────────────
+    if (dock_.mode & Dock_Left) {
+        local.x = pt.x + (pw - 1) * dock_.dock.x / 100 + dock_.offset.x;
+    }
+    if (dock_.mode & Dock_Top) {
+        local.y = pt.y + (ph - 1) * dock_.dock.y / 100 + dock_.offset.y;
+    }
+    if (dock_.mode & Dock_Right) {
+        local.x2 = pt.x + (pw - 1) * dock_.dock.x2 / 100 + dock_.offset.x2;
+    }
+    if (dock_.mode & Dock_Down) {
+        local.y2 = pt.y + (ph - 1) * dock_.dock.y2 / 100 + dock_.offset.y2;
+    }
+
+    // ── Stage 2: Screen + Clip（邊框扣除）────
+    screen = local.move(pt.x, pt.y);
+    if (draw_border && border_style != BorderStyle_None) {
+        clip = screen.expand(-1, -1);
+    } else {
+        clip = screen;
+    }
+
+    // ── Stage 3: Arrange（子元素排列）────────
+    // ... see below ...
+}
 ```
 
 ## Arrange 實作
 
 ### 核心概念
 
-Arrange 在父控件的 `CalRect` 中執行，負責計算所有子元素的 `local` rect。子元素隨後在自己的 `CalRect` 中被轉換為 screen 座標。
+Arrange 在父控件的 `CalRect` 中執行（Stage 3），負責計算所有子元素的 `local` rect。
+子元素隨後在自己的 `CalRect` 中被轉換為 screen 座標。
+
+**重要**：Arrange 會將子元素的 `dock_.mode` 設為 `Dock_None`，覆蓋子元素自身的 Dock 設定。
 
 ### Arrange_None
 不處理子元素排列，子元素使用各自的 `local` rect（手動設定）。
 
 ### Arrange_Item
-每個子元素使用固定的 `item_size`，按方向排列。
+
+Arrange_Item 有**兩種模式**，由 `arrange_.items` 決定：
+
+#### 模式 A：欄位模式（`items > 0`）
+
+將容器分割為固定數量的欄位，子元素在欄位內**置中排列**，超出欄位數量時自動換行。
+
+**Vertical（垂直方向）** — 橫向排 `items` 個欄位，滿列後換行：
+
+```
+|    container width     |
+┌─────┬─────┬─────┐
+│ item1 │ item2 │ item3 │   ← items=3, 每欄置中
+├─────┼─────┼─────┤
+│ item4 │ item5 │       │   ← 換行，maxh 取該列最大高度
+└─────┴─────┴─────┘
+```
 
 ```cpp
-void Win::ArrangeItem()
-{
-    int gap = 0;  // item spacing, future extension
-    Point pos;
+// Vertical, items > 0
+int item_width = local.width() / arrange_.items;  // 每欄寬度
+int cx = 0, cy = 0, i = 0, maxh = 0;
+for (auto ob : child) {
+    ob->dock_.mode = Dock_None;
+    int cw = ob->local.width();
+    int ch = ob->local.height();
+    // 欄位內置中
+    ob->local.x = cx + ((item_width - cw) >> 1);
+    ob->local.y = cy;
+    ob->local.x2 = ob->local.x + cw;
+    ob->local.y2 = cy + ch;
+    maxh = std::max(maxh, ch);
+    i++;
+    if (i >= arrange_.items) {  // 滿列換行
+        i = 0; cx = 0; cy += maxh; maxh = 0;
+    }
+}
+```
 
-    if (is_vertical) {
-        pos.x = clip.x - GetClipPos().x;  // relative to parent local
-        pos.y = clip.y - GetClipPos().y;
-        for (int i = 0; i < (int)child.size(); i++) {
-            child[i]->local.set(
-                pos.x,
-                pos.y,
-                pos.x + item_size.x - 1,
-                pos.y + item_size.y - 1
-            );
-            pos.y += item_size.y + gap;
-        }
-    } else {  // horizontal
-        for (int i = 0; i < (int)child.size(); i++) {
-            child[i]->local.set(
-                pos.x,
-                pos.y,
-                pos.x + item_size.x - 1,
-                pos.y + item_size.y - 1
-            );
-            pos.x += item_size.x + gap;
-        }
+**Horizontal（水平方向）** — 縱向排 `items` 個欄位，滿欄後換列：
+
+```cpp
+// Horizontal, items > 0
+int item_height = local.height() / arrange_.items;  // 每欄高度
+int cy = 0, cx = 0, i = 0, maxw = 0;
+for (auto ob : child) {
+    ob->dock_.mode = Dock_None;
+    int cw = ob->local.width();
+    int ch = ob->local.height();
+    // 欄位內置中
+    ob->local.x = cx;
+    ob->local.y = cy + ((item_height - ch) >> 1);
+    ob->local.x2 = cx + cw;
+    ob->local.y2 = cy + ch;
+    maxw = std::max(maxw, cw);
+    i++;
+    if (i >= arrange_.items) {  // 滿欄換列
+        i = 0; cy = 0; cx += maxw; maxw = 0;
+    }
+}
+```
+
+#### 模式 B：固定尺寸模式（`items == 0`）
+
+每個子元素使用固定的 `item_size`，按方向排列並自動換行。
+
+**Vertical（垂直方向）** — 橫向排固定寬度的項目，超出容器寬度時換行：
+
+```
+|    container width     |
+┌──────────┬──────────┐
+│ item1    │ item2    │   ← 每個 item_size.x 寬
+├──────────┴──────────┤
+│ item3               │   ← 換行
+└─────────────────────┘
+```
+
+```cpp
+// Vertical, items == 0 (fixed size)
+int cx = 0, cy = 0;
+for (auto ob : child) {
+    ob->dock_.mode = Dock_None;
+    ob->local.x = cx;
+    ob->local.y = cy;
+    ob->local.x2 = cx + arrange_.item_size.x;
+    ob->local.y2 = cy + arrange_.item_size.y;
+    cx += arrange_.item_size.x;
+    if (cx >= lw) {  // 超出容器寬度，換行
+        cx = 0; cy += arrange_.item_size.y;
+    }
+}
+```
+
+**Horizontal（水平方向）** — 縱向排固定高度的項目，超出容器高度時換列：
+
+```cpp
+// Horizontal, items == 0 (fixed size)
+int cx = 0, cy = 0;
+for (auto ob : child) {
+    ob->dock_.mode = Dock_None;
+    ob->local.x = cx;
+    ob->local.y = cy;
+    ob->local.x2 = cx + arrange_.item_size.x;
+    ob->local.y2 = cy + arrange_.item_size.y;
+    cy += arrange_.item_size.y;
+    if (cy >= lh) {  // 超出容器高度，換列
+        cy = 0; cx += arrange_.item_size.x;
     }
 }
 ```
 
 ### Arrange_Content
-根據子元素的內容尺寸自動排列。每個子元素先計算自身需要的最小尺寸，然後按方向堆疊。
+
+根據子元素的內容尺寸自動排列。當下一個元素放不進當前行/欄時自動換行。
+與 Arrange_Item 不同：
+- **不使用固定尺寸**，每個子元素使用自身的 `local.width()` / `local.height()`
+- **不會置中**，靠左（或靠上）緊貼排列
+- **自動換行**，當當前行/欄放不下時才換行
+
+**Vertical（垂直方向）** — 橫向流動，超出容器寬度時換行：
+
+```
+|    container width     |
+┌──────────┬────────────┐
+│ btn1 │ check2         │   ← 超過寬度換到下行
+├──────────┼────────────┤
+│ arrange1 │ btn3       │   ← 超過寬度換到下行
+├──────────┴────────────┤
+│ chk1 │ chk2 │ chk3    │
+└───────────────────────┘
+```
 
 ```cpp
-void Win::ArrangeContent()
-{
-    Point pos;
-    int total_size = 0;  // accumulated size in arrange direction
+// Vertical
+int cx = 0, cy = 0, maxh = 0;
+for (auto ob : child) {
+    ob->dock_.mode = Dock_None;
+    int cw = ob->local.width();
+    int ch = ob->local.height();
 
-    if (is_vertical) {
-        pos.x = clip.x - GetClipPos().x;
-        pos.y = clip.y - GetClipPos().y;
-        for (auto& ch : child) {
-            int h = ch->GetContentHeight();  // virtual, subclass implements
-            int w = std::min(ch->GetContentWidth(), clip.width());
-            ch->local.set(pos.x, pos.y, pos.x + w - 1, pos.y + h - 1);
-            pos.y += h;
-        }
-    } else {  // horizontal
-        for (auto& ch : child) {
-            int w = ch->GetContentWidth();
-            int h = std::min(ch->GetContentHeight(), clip.height());
-            ch->local.set(pos.x, pos.y, pos.x + w - 1, pos.y + h - 1);
-            pos.x += w;
-        }
+    // 如果當前行放不下且不是行的第一個元素，換行
+    if (cx + cw > lw && cx > 0) {
+        cx = 0; cy += maxh; maxh = 0;
     }
+
+    ob->local.x = cx;
+    ob->local.y = cy;
+    ob->local.x2 = cx + cw - 1;
+    ob->local.y2 = cy + ch - 1;
+
+    cx += cw;
+    maxh = std::max(maxh, ch);
+}
+```
+
+**Horizontal（水平方向）** — 縱向流動，超出容器高度時換列：
+
+```cpp
+// Horizontal
+int cy = 0, cx = 0, maxw = 0;
+for (auto ob : child) {
+    ob->dock_.mode = Dock_None;
+    int cw = ob->local.width();
+    int ch = ob->local.height();
+
+    // 如果當前欄放不下且不是欄的第一個元素，換列
+    if (cy + ch > lh && cy > 0) {
+        cy = 0; cx += maxw; maxw = 0;
+    }
+
+    ob->local.x = cx;
+    ob->local.y = cy;
+    ob->local.x2 = cx + cw - 1;
+    ob->local.y2 = cy + ch - 1;
+
+    cy += ch;
+    maxw = std::max(maxw, cw);
 }
 ```
 
@@ -247,43 +410,69 @@ void Win::ArrangeContent()
 ```cpp
 void Win::CalRect(Win* parent)
 {
-    // ── Stage 1: Dock (position self) ───────────────
-    CalRectDock(parent);
+    // ── 準備父容器資訊 ───────────────────────
+    Point pt = { 0, 0 };
+    int pw = local.width(), ph = local.height();
+    if (parent) {
+        pt = parent->GetClipPos();       // Slider 會覆寫此方法
+        pw = parent->clip.width();
+        ph = parent->clip.height();
+    }
 
-    // ── Stage 2: Clip (account for border) ──────────
+    // ── Stage 1: Dock（百分比錨定）───────────
+    if (dock_.mode & Dock_Left)
+        local.x  = pt.x + (pw - 1) * dock_.dock.x / 100 + dock_.offset.x;
+    if (dock_.mode & Dock_Top)
+        local.y  = pt.y + (ph - 1) * dock_.dock.y / 100 + dock_.offset.y;
+    if (dock_.mode & Dock_Right)
+        local.x2 = pt.x + (pw - 1) * dock_.dock.x2 / 100 + dock_.offset.x2;
+    if (dock_.mode & Dock_Down)
+        local.y2 = pt.y + (ph - 1) * dock_.dock.y2 / 100 + dock_.offset.y2;
+
+    // ── Stage 2: Screen + Clip（邊框扣除）────
+    screen = local.move(pt.x, pt.y);
     if (draw_border && border_style != BorderStyle_None)
         clip = screen.expand(-1, -1);
     else
         clip = screen;
 
-    // ── Stage 3: Arrange (position children) ────────
-    CalRectArrange();
+    // ── Stage 3: Arrange（子元素排列）────────
+    if (arrange_.mode == Arrange_Item) {
+        // ... items > 0: 欄位模式 / items == 0: 固定尺寸模式 ...
+    } else if (arrange_.mode == Arrange_Content) {
+        // ... 內容流式佈局，自動換行 ...
+    }
 }
 ```
+
+> **注意**：`CalRect` 直接修改 `local` rect（而非先計算再賦值給 `screen`），
+> 因為 Dock 的百分比錨定需要基於父容器 clip 動態計算。
 
 ## Win 結構體新增欄位
 
 ```cpp
+struct Dock_ {
+    int mode;     // Dock_None / Dock_Left / Dock_Top / Dock_Right / Dock_Down / Dock_All (bit flags)
+    Rect dock;    // {x, y, x2, y2} — 百分比錨定值（0-100）
+                  //   x: Left 的百分比, y: Top 的百分比
+                  //   x2: Right 的百分比, y2: Down 的百分比
+    Rect offset;  // {x, y, x2, y2} — 像素級偏移量
+};
+
+struct Arrange_ {
+    int mode;         // Arrange_None / Arrange_Item / Arrange_Content
+    bool is_vertical; // true=垂直方向（橫向流動）, false=水平方向（縱向流動）
+    int items;        // >0: 欄位模式（分割為 N 個等寬/等高欄位）
+                      // ==0: 固定尺寸模式
+    Point item_size;  // 固定尺寸模式下的每個項目大小 (x=width, y=height)
+};
+
 struct Win {
     // ... existing fields ...
-
-    Dock dock;       // docking configuration
-    Arrange arrange; // arrangement configuration for children
+    Dock_ dock_;       // docking configuration
+    Arrange_ arrange_; // arrangement configuration for children
 };
 ```
-
-## 與現有 Display_ 的關係
-
-| Display_ | 對應的 Dock/Arrange |
-|---|---|
-| `Display_User` | `Dock_None` + `Arrange_None`（手動指定 rect） |
-| `Display_Block` | `Dock_Left \| Dock_Right` + 高度由內容決定 |
-| `Display_Flex` | 可透過 Dock/Arrange 組合實現，但非直接對應 |
-| `Display_Grid` | 不適合用 Dock/Arrange 表達 |
-
-建議：
-- **保留** `Display_User` / `Display_Block`（簡單場景）
-- **棄用** `Display_Flex` / `Display_Grid`（TUI 中過度設計，Dock/Arrange 組合已足夠）
 
 ## 典型使用模式
 
@@ -303,10 +492,10 @@ struct Win {
 └───────────────────────────────┘
 ```
 
-- Title: `dock.mode = Dock_Top`, `dock.dock.height() = 2`
-- Nav: `dock.mode = Dock_Left`, `dock.dock.width() = 3`
-- Main: `dock.mode = Dock_All`
-- Status: `dock.mode = Dock_Down`, `dock.dock.height() = 1`
+- Title: `dock_.mode = Dock_Top | Dock_Left | Dock_Right`, `dock_.dock.y = 0, x = 0, x2 = 100`（貼頂部，橫跨全寬）
+- Nav: `dock_.mode = Dock_Left | Dock_Top | Dock_Down`, `dock_.dock.x = 0, y = 2, y2 = 98`, `dock_.dock.x2 = 15`（左側 15% 寬，上下留白）
+- Main: `dock_.mode = Dock_All`, `dock_.dock = {15, 2, 100, 98}`（填滿剩餘空間）
+- Status: `dock_.mode = Dock_Down | Dock_Left | Dock_Right`, `dock_.dock.y2 = 100, x = 0, x2 = 100`（貼底部，橫跨全寬）
 
 ### 2. 文件列表（側邊欄內）
 
@@ -319,7 +508,9 @@ struct Win {
 └────────────────────────────────────────────────┘
 ```
 
-- Nav: `arrange.mode = Arrange_Item`, `arrange.is_vertical = true`, `item_size = {15, 1}`
+- Nav: `arrange_.mode = Arrange_Item`, `arrange_.is_vertical = true`, `arrange_.items = 1`（單欄，項目置中）
+
+> 若使用固定尺寸模式：`arrange_.items = 0`, `arrange_.item_size = {15, 1}`
 
 ### 3. 表單輸入
 
@@ -333,105 +524,150 @@ struct Win {
 └────────────────────────────────────────────────┘
 ```
 
-- Form: `arrange.mode = Arrange_Content`, `is_vertical = true`
-- 每個輸入欄位回報自身內容高度，自動堆疊
-
-## 擴充方向
-
-### Gap（間距）
-
-Arrange 支援 item 之間的間距：
-
-```cpp
-struct Arrange {
-    // ...
-    int gap = 0;        // spacing between items
-};
-```
-
-### Align（對齊）
-
-當子元素尺寸小於可用空間時，控制對齊方式：
-
-```cpp
-struct Arrange {
-    // ...
-    Align_ align_main   = Align_Start;  // along arrange direction
-    Align_ align_cross  = Align_Start;  // perpendicular to arrange direction
-};
-```
-
-### Wrap（換行）
-
-當子元素超出容器時自動換行：
-
-```cpp
-struct Arrange {
-    // ...
-    bool wrap = false;
-};
-```
+- Form: `arrange_.mode = Arrange_Content`, `arrange_.is_vertical = true`
+- 每個輸入欄位使用自身的 `local.width()` / `local.height()`，自動換行
 
 ## 與 Slider 的整合
 
-`Slider::CalRect` 目前手動計算 `content_length`。Arrange 可以統一這個邏輯：
+`Slider::CalRect` 呼叫 `Win::CalRect(parent)` 完成 Dock + Arrange 後，再計算滾動相關參數：
 
-- Slider 內部使用 `Arrange_Item`（垂直）排列子元素
-- `content_length` = 所有 item 總高度 + gap
-- `scroll_value` 控制 clip 的偏移量
+- Slider 的 Arrange（通常是 `Arrange_Item`）已經將子元素的 `local` rect 排列好
+- `content_length` = 所有子元素在滾動方向上的最大延伸範圍
+- `scroll_max` = `content_length - clip.size()`（可滾動的總距離）
+- `GetClipPos()` 被覆寫，回傳帶有 `scroll_value` 偏移的座標，使子元素的 Dock 計算自動應用滾動偏移
 
 ```cpp
 void Slider::CalRect(Win* parent)
 {
     Win::CalRect(parent);  // Dock + Arrange already handled
 
-    // content_length is now computed by Arrange_Item
-    // scroll_value adjusts the effective clip offset
+    // 為滾動條保留一格空間
+    if (is_vertical) {
+        clip.x2--;  // 右側留一列給垂直滾動條
+    } else {
+        clip.y2--;  // 底部留一行給水平滾動條
+    }
+
+    // 計算內容總長度
+    content_length = 0;
+    if (is_vertical) {
+        for (auto ch : child)
+            content_length = std::max(content_length, ch->local.y2 + 1);
+        if (content_length < clip.height())
+            content_length = clip.height();
+        scroll_max = content_length - clip.height();
+    } else {
+        for (auto ch : child)
+            content_length = std::max(content_length, ch->local.x2 + 1);
+        if (content_length < clip.width())
+            content_length = clip.width();
+        scroll_max = content_length - clip.width();
+    }
+}
+
+// Slider 覆寫 GetClipPos，讓子元素的 Dock 計算自動應用滾動偏移
+Point Slider::GetClipPos() const
+{
+    if (is_vertical)
+        return { clip.x, clip.y - scroll_value };  // Y 方向偏移
+    return { clip.x - scroll_value, clip.y };      // X 方向偏移
 }
 ```
 
 ## 解析器（EditLine / ParseCmd）
 
-支援在 DSL 中設定 Dock 和 Arrange：
+實際的解析器實作在 `Win::ParseCmd`（第 1098 行）：
 
 ```cpp
-// Dock parsing
-bool Win::ParseDock(EditLine& el)
-{
-    std::string tok = el.next_tok();
-    if (eqi(tok, "None"))   dock.mode = Dock_None;
-    else if (eqi(tok, "Top"))  dock.mode = Dock_Top;
-    else if (eqi(tok, "Left")) dock.mode = Dock_Left;
-    else if (eqi(tok, "Right"))dock.mode = Dock_Right;
-    else if (eqi(tok, "Down")) dock.mode = Dock_Down;
-    else if (eqi(tok, "All"))  dock.mode = Dock_All;
+// Dock parsing — dock_.dock 是百分比 (0-100)
+else if (eqi(cmd, "Dock")) {
+    dock_.mode = ParseDock(el.tok());       // None/Top/Left/Right/Down/All
+    dock_.dock.x  = el.tok_int();           // Left 百分比
+    dock_.dock.y  = el.tok_int();           // Top 百分比
+    dock_.dock.x2 = el.tok_int();           // Right 百分比
+    dock_.dock.y2 = el.tok_int();           // Down 百分比
+}
+else if (eqi(cmd, "DockOffset")) {
+    dock_.offset.x  = el.tok_int();         // Left 像素偏移
+    dock_.offset.y  = el.tok_int();         // Top 像素偏移
+    dock_.offset.x2 = el.tok_int();         // Right 像素偏移
+    dock_.offset.y2 = el.tok_int();         // Down 像素偏移
+}
 
-    // optional: size and offset
-    std::string next = el.tok();
-    if (!next.empty()) {
-        // parse dock rect or offset
+// Arrange parsing — 支援欄位模式和固定尺寸模式
+else if (eqi(cmd, "Arrange")) {
+    arrange_.mode = ParseArrange(el.tok()); // None/Item/Content
+    arrange_.is_vertical = el.tok_bool();   // true=垂直, false=水平
+    if (arrange_.mode == Arrange_Item) {
+        arrange_.items = el.tok_int();      // >0: 欄位數, ==0: 固定尺寸模式
+        arrange_.item_size.x = el.tok_int();// item_width
+        arrange_.item_size.y = el.tok_int();// item_height
     }
-    return true;
 }
+```
 
-// Arrange parsing
-bool Win::ParseArrange(EditLine& el)
+`ParseDock`（第 1035 行）：
+```cpp
+Dock_ ParseDock(const std::string& tok)
 {
-    std::string tok = el.next_tok();
-    if (eqi(tok, "None"))      arrange.mode = Arrange_None;
-    else if (eqi(tok, "Item"))  arrange.mode = Arrange_Item;
-    else if (eqi(tok, "Content"))arrange.mode = Arrange_Content;
-
-    // optional: direction and item_size
-    return true;
+    if (eqi(tok, "None")) return Dock_None;
+    if (eqi(tok, "Top"))  return Dock_Top;
+    if (eqi(tok, "Left")) return Dock_Left;
+    if (eqi(tok, "Right"))return Dock_Right;
+    if (eqi(tok, "Down")) return Dock_Down;
+    if (eqi(tok, "All"))  return Dock_All;
+    return Dock_None;
 }
 ```
 
-DSL 範例：
-
+`ParseArrange`（第 1046 行）：
+```cpp
+Arrange_ ParseArrange(const std::string& tok)
+{
+    if (eqi(tok, "None"))     return Arrange_None;
+    if (eqi(tok, "Item"))     return Arrange_Item;
+    if (eqi(tok, "Content"))  return Arrange_Content;
+    return Arrange_None;
+}
 ```
-Dock Top 2
-Dock Left 15
-Dock All
-Arrange Item Vertical 10x1
+
+### DSL 範例
+
+**標準 TUI 框架：**
+```
+# Title bar — 貼頂部，橫跨全寬
+Dock All 0 0 100 5
+Rect 0 0 80 2
+
+# Navigation — 左側 15% 寬度
+Dock All 0 5 15 95
+Rect 0 0 15 1
+
+# Main content — 填滿剩餘空間
+Dock All 15 5 100 95
+Arrange Item true 3
+# items=3: 垂直方向分 3 欄，子元素置中排列
+
+# Status bar — 貼底部
+Dock All 0 95 100 100
+Rect 0 0 80 1
+```
+
+**固定尺寸模式（items = 0）：**
+```
+Arrange Item true 0 10 1
+# items=0, item_size={10, 1}: 每個項目 10x1，橫向排列自動換行
+```
+
+**內容流式佈局：**
+```
+Arrange Content true
+# 子元素按自身尺寸排列，超出容器寬度時自動換行
+```
+
+**DockOffset 微調：**
+```
+Dock All 0 0 100 100
+DockOffset 2 2 2 2
+# 四邊各內縮 2 像素
 ```

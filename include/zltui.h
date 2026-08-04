@@ -158,13 +158,15 @@ struct Char {
 struct Text {
     std::string text;
     std::vector<Char> chars;
+    std::vector<Point> position;
 
     bool bold = false;
     bool italic = false;
     bool underline = false;
     int text_width = 0;
+    int text_height = 0;
 
-    virtual void setText(const std::string& _text);
+    virtual void setText(const std::string& _text, int wrap = 0);
 };
 
 struct Cell {
@@ -258,6 +260,7 @@ public:
     void EnableRawMode();
     void DisableRawMode();
     Point GetSize();
+    void Resize();
 
     DrawBuffer& GetDrawBuffer() { return drawbuffers[current_drawbuffer]; }
     void Render();
@@ -306,16 +309,6 @@ enum Align_
 
 Align_ ParseAlign(const std::string& tok);
 
-enum Display_
-{
-    Display_User,   // rect define by user
-    Display_Block,  // follow parent clip w and auto height by content
-    Display_Flex,
-    Display_Grid,
-};
-
-Display_ ParseDisplay(const std::string& tok);
-
 // Dock direction flags (bitwise combinable)
 enum Dock_
 {
@@ -325,7 +318,13 @@ enum Dock_
     Dock_Right = 4,   // dock to right edge
     Dock_Down = 8,    // dock to bottom edge
     Dock_All = Dock_Top | Dock_Left | Dock_Right | Dock_Down,  // stretch fill all edges
+    Dock_Top_Pane = 16,
+    Dock_Left_Pane = 32,
+    Dock_Right_Pane = 64,
+    Dock_Down_Pane = 128,
 };
+
+Dock_ ParseDock(const std::string& tok);
 
 // Docking configuration: how a widget anchors inside its parent
 struct Dock {
@@ -342,13 +341,15 @@ enum Arrange_
     Arrange_Content,    // auto-fit by content size
 };
 
+Arrange_ ParseArrange(const std::string& tok);
+
 // Arrangement configuration for child widgets
 struct Arrange
 {
     Arrange_ mode = Arrange_None;  // arrangement mode
     bool is_vertical = true;       // vertical (true) or horizontal (false)
     int items = 0;                 // number of items
-    Point item_size;               // size per item (w,h)
+    Point item_size = { 0,0 };     // size per item (w,h)
 };
 
 struct Win
@@ -371,6 +372,7 @@ struct Win
     virtual Point GetClipPos() const;
 
     std::string name = "";
+    std::string title = "";
     bool is_visible = true;
     bool is_notifiable = true;
     bool is_notify = false;
@@ -379,6 +381,8 @@ struct Win
     BorderStyle_ border_style = BorderStyle_Round;
     Color bg_color = COLOR_BG;
     Color fg_color = AnsiColor_White;
+    Dock dock_;
+    Arrange arrange_;
 
     Rect local;
     Rect screen;
@@ -406,7 +410,7 @@ struct Label : Win, Text
     void Paint(DrawBuffer& drawbuf) override;
     virtual void PaintText(DrawBuffer& drawbuf);
 
-    void setText(const std::string& _text) override;
+    void setText(const std::string& _text);
 
     Align_ text_algn = Align_Start;
 };
@@ -451,9 +455,11 @@ struct Slider : Win
     Color thumb_color = COLOR_THUMB;
 };
 
-struct Edit : Slider
+struct Edit : Slider, Text
 {
     Edit(Mgr* mgr) :Slider(mgr) {}
+
+
 };
 
 struct Mgr : Win

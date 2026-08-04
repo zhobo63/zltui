@@ -213,22 +213,49 @@ Char Char::from_code(uint32_t cp)
     return c;
 }
 
-void Text::setText(const std::string& _text)
+void Text::setText(const std::string& _text, int wrap)
 {
     text = _text;
     text_width = 0;
     chars.resize(0);
+    position.resize(0);
+
     const uint8_t* p = reinterpret_cast<const uint8_t*>(text.data());
     size_t len = text.size();
+    int cx = 0;
+    int cy = 0;
+
     while (len > 0) {
         uint32_t cp = 0;
         int n = utf8_mbtowc(cp, p, static_cast<int>(len));
         if (n <= 0) break;
+
+        // newline: start a new row
+        if (cp == '\n') {
+            text_width = std::max(text_width, cx);
+            cx = 0;
+            cy++;
+            p += n; len -= n;
+            continue;
+        }
+
         auto ch = Char::from_code(cp);
-        text_width += ch.char_width;
+
+        // wrap: if this char would exceed the limit and we're not at row start, break
+        if (wrap > 0 && cx + ch.char_width > wrap && cx > 0) {
+            text_width = std::max(text_width, cx);
+            cx = 0;
+            cy++;
+        }
+
+        position.push_back({cx, cy});
+        cx += ch.char_width;
         chars.push_back(ch);
         p += n; len -= n;
     }
+
+    text_width = std::max(text_width, cx);
+    text_height = cy;
 }
 
 BorderStyle_ ParseBorderStyle(const std::string& param)
@@ -312,7 +339,54 @@ void DrawBuffer::Text(const std::string& text, const Point& pos, const Color& co
 
 void DrawBuffer::Text(const Point& pos, const TUI::Text& text, const Color& color)
 {
-    Text(text.text, pos, color, text.bold, text.italic, text.underline);
+    Rect clip = { 0,0,width_ - 1, height_ - 1 };
+
+    if (!clips_.empty()) {
+        clip = clip.intersect(clips_.back());
+    }
+
+    for (size_t i = 0; i < text.chars.size(); i++) {
+        const auto& ch = text.chars[i];
+        const auto& pt = text.position[i];
+        int cur_x = pos.x + pt.x;
+        int cur_y = pos.y + pt.y;
+
+        if (cur_y > clip.y2) break;
+
+        if (clip.inside(Point{ cur_x, cur_y }) && cur_x + ch.char_width <= clip.x2) {
+            auto& cell = cells_[cur_y * width_ + cur_x];
+            cell.fg_color = color;
+            cell.size = ch.char_width;
+            cell.bold = text.bold;
+            cell.italic = text.italic;
+            cell.underline = text.underline;
+            // reconstruct the UTF-8 bytes from the char
+            uint32_t cp = ch.ch;
+            std::string buf;
+            if (cp < 0x80) {
+                buf += static_cast<char>(cp);
+            }
+            else if (cp < 0x800) {
+                buf += static_cast<char>(0xC0 | (cp >> 6));
+                buf += static_cast<char>(0x80 | (cp & 0x3F));
+            }
+            else if (cp < 0x10000) {
+                buf += static_cast<char>(0xE0 | (cp >> 12));
+                buf += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                buf += static_cast<char>(0x80 | (cp & 0x3F));
+            }
+            else {
+                buf += static_cast<char>(0xF0 | (cp >> 18));
+                buf += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+                buf += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                buf += static_cast<char>(0x80 | (cp & 0x3F));
+            }
+            cell.content = buf;
+            if (cell.size > 1) {
+                cells_[cur_y * width_ + cur_x + 1].content = "";
+            }
+        }
+    }
 }
 
 void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style, const Color& color)
@@ -486,6 +560,13 @@ std::vector<Event> Terminal::s_events;
 Terminal::Terminal()
 {
     EnableRawMode();
+    auto size = GetSize();
+    drawbuffers[0].resize(size.x, size.y);
+    drawbuffers[1].resize(size.x, size.y);
+}
+
+void Terminal::Resize()
+{
     auto size = GetSize();
     drawbuffers[0].resize(size.x, size.y);
     drawbuffers[1].resize(size.x, size.y);
@@ -699,7 +780,7 @@ void Terminal::event_thread()
     while (s_running.load()) {
         ReadConsoleInputW(hIn, &rec, 1, &count);
         if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown) {
-            // TODO 
+            // TODO
         }
         else if (rec.EventType == MOUSE_EVENT) {
             Event ev;
@@ -951,13 +1032,45 @@ Align_ ParseAlign(const std::string& tok)
     return Align_Start;
 }
 
-Display_ ParseDisplay(const std::string& tok)
+Dock_ ParseDock(const std::string& tok)
 {
-    if (eqi(tok, "User"))  return Display_User;
-    if (eqi(tok, "Block")) return Display_Block;
-    if (eqi(tok, "Flex"))  return Display_Flex;
-    if (eqi(tok, "Grid"))  return Display_Grid;
-    return Display_User;
+    // support combinations: Left|Right, Top|Left|Down, etc.
+    auto parse_one = [](const std::string& s) -> Dock_
+    {
+        if (eqi(s, "None"))       return Dock_None;
+        if (eqi(s, "Top"))        return Dock_Top;
+        if (eqi(s, "Left"))       return Dock_Left;
+        if (eqi(s, "Right"))      return Dock_Right;
+        if (eqi(s, "Down"))       return Dock_Down;
+        if (eqi(s, "All"))        return Dock_All;
+        if (eqi(s, "Top_Pane"))   return Dock_Top_Pane;
+        if (eqi(s, "Left_Pane"))  return Dock_Left_Pane;
+        if (eqi(s, "Right_Pane")) return Dock_Right_Pane;
+        if (eqi(s, "Down_Pane"))  return Dock_Down_Pane;
+        return Dock_None;
+    };
+
+    uint32_t result = Dock_None;
+    size_t start = 0;
+    while (start < tok.size()) {
+        size_t bar = tok.find('|', start);
+        std::string part = tok.substr(start, bar == std::string::npos ? bar : bar - start);
+        // trim whitespace
+        while (!part.empty() && isspace(part.front())) part.erase(part.begin());
+        while (!part.empty() && isspace(part.back()))  part.pop_back();
+        result |= parse_one(part);
+        if (bar == std::string::npos) break;
+        start = bar + 1;
+    }
+    return (Dock_)result;
+}
+
+Arrange_ ParseArrange(const std::string& tok)
+{
+    if (eqi(tok, "None"))     return Arrange_None;
+    if (eqi(tok, "Item"))     return Arrange_Item;
+    if (eqi(tok, "Content"))  return Arrange_Content;
+    return Arrange_None;
 }
 
 /// <summary>
@@ -1019,6 +1132,9 @@ bool Win::ParseCmd(const std::string &cmd, EditLine& el)
     else if (eqi(cmd, "Name")) {
         name = el.tok();
     }
+    else if (eqi(cmd, "Title")) {
+        title = el.tok();
+    }
     else if (eqi(cmd, "Rect")) {
         local.x = el.tok_int();
         local.y = el.tok_int();
@@ -1043,6 +1159,28 @@ bool Win::ParseCmd(const std::string &cmd, EditLine& el)
     else if (eqi(cmd, "bgColor")) {
         bg_color = Color::Parse(el.tok());
     }
+    else if (eqi(cmd, "Dock")) {
+        dock_.mode = ParseDock(el.tok());
+        dock_.dock.x = el.tok_int();
+        dock_.dock.y = el.tok_int();
+        dock_.dock.x2 = el.tok_int();
+        dock_.dock.y2 = el.tok_int();
+    }
+    else if (eqi(cmd, "DockOffset")) {
+        dock_.offset.x = el.tok_int();
+        dock_.offset.y = el.tok_int();
+        dock_.offset.x2 = el.tok_int();
+        dock_.offset.y2 = el.tok_int();
+    }
+    else if (eqi(cmd, "Arrange")) {
+        arrange_.mode = ParseArrange(el.tok());
+        arrange_.is_vertical = el.tok_bool();
+        if (arrange_.mode == Arrange_Item) {
+            arrange_.items = el.tok_int();
+            arrange_.item_size.x = el.tok_int();
+            arrange_.item_size.y = el.tok_int();
+        }
+    }
     else {
         ret = false;
     }
@@ -1064,6 +1202,27 @@ void Win::CalRect(Win* parent)
         pw = parent->clip.width();
         ph = parent->clip.height();
     }
+    int lw = local.width();
+    int lh = local.height();
+    if (dock_.mode & Dock_Left) {
+        local.x = pt.x + (pw - 1) * dock_.dock.x / 100 + dock_.offset.x;
+    }
+    if (dock_.mode & Dock_Top) {
+        local.y = pt.y + (ph - 1) * dock_.dock.y / 100 + dock_.offset.y;
+    }
+    if (dock_.mode & Dock_Right) {
+        local.x2 = pt.x + (pw - 1) * dock_.dock.x2 / 100 + dock_.offset.x2;
+    }
+    if (dock_.mode & Dock_Down) {
+        local.y2 = pt.y + (ph - 1) * dock_.dock.y2 / 100 + dock_.offset.y2;
+    }
+    if (dock_.mode & Dock_Right_Pane) {
+        local.y = local.y2 - lw;
+    }
+    if (dock_.mode & Dock_Down_Pane) {
+        local.x = local.x2 - lh;
+    }
+
     screen = local.move(pt.x, pt.y);
     if (draw_border && border_style != BorderStyle_None) {
         clip = screen.expand(-1, -1);
@@ -1072,6 +1231,186 @@ void Win::CalRect(Win* parent)
         clip = screen;
     }
 
+    if (arrange_.mode == Arrange_Item) {
+        /*
+        Items mode:
+        每個子元素使用 `item_width`，按方向排列。
+        子元素放置於欄位中間
+        Vertical:
+        if items = 3
+        item1 item2 item3
+        item4 item5 item6
+
+        Item_size mode:
+        每個子元素使用固定的 `item_size`，按方向排列。
+        子元素放置欄位左邊
+
+        Vertical:
+        |    width    |
+        item1 item2   <- 超過寬度換到下行
+        item3
+
+        */
+        if (arrange_.is_vertical) {
+            int lw = local.width();
+            int item_width = 0;
+            if (arrange_.items > 0) {
+                item_width = local.width() / arrange_.items;
+            }
+            else {
+                item_width = arrange_.item_size.x;
+            }
+            int cx = 0;
+            int cy = 0;
+            int i = 0;
+            int maxh = 0;
+
+            for (auto ob : child) {
+                ob->dock_.mode = Dock_None;
+                if (arrange_.items > 0) {
+                    int cw = ob->local.width();
+                    int ch = ob->local.height();
+                    ob->local.x = cx + ((item_width - cw) >> 1);
+                    ob->local.y = cy;
+                    ob->local.x2 = ob->local.x + cw;
+                    ob->local.y2 = cy + ch;
+                    maxh = std::max(maxh, ch);
+                    i++;
+                    if (i >= arrange_.items) {
+                        i = 0;
+                        cx = 0;
+                        cy += maxh;
+                        maxh = 0;
+                    }
+                }
+                else {
+                    ob->local.x = cx;
+                    ob->local.y = cy;
+                    ob->local.x2 = cx + arrange_.item_size.x;
+                    ob->local.y2 = cy + arrange_.item_size.y;
+
+                    cx += arrange_.item_size.x;
+                    if (cx >= lw) {
+                        cx = 0;
+                        cy += arrange_.item_size.y;
+                    }
+                }
+            }
+        }
+        else {
+            // Horizontal: items flow top-to-bottom, wrap to next column
+            int lh = local.height();
+            if (arrange_.items > 0) {
+                int item_height = local.height() / arrange_.items;
+                int cy = 0;
+                int cx = 0;
+                int i = 0;
+                int maxw = 0;
+
+                for (auto ob : child) {
+                    ob->dock_.mode = Dock_None;
+                    int cw = ob->local.width();
+                    int ch = ob->local.height();
+                    ob->local.x = cx;
+                    ob->local.y = cy + ((item_height - ch) >> 1);
+                    ob->local.x2 = cx + cw;
+                    ob->local.y2 = cy + ch;
+                    maxw = std::max(maxw, cw);
+                    i++;
+                    if (i >= arrange_.items) {
+                        i = 0;
+                        cy = 0;
+                        cx += maxw;
+                        maxw = 0;
+                    }
+                }
+            }
+            else {
+                int cx = 0;
+                int cy = 0;
+
+                for (auto ob : child) {
+                    ob->dock_.mode = Dock_None;
+                    ob->local.x = cx;
+                    ob->local.y = cy;
+                    ob->local.x2 = cx + arrange_.item_size.x;
+                    ob->local.y2 = cy + arrange_.item_size.y;
+
+                    cy += arrange_.item_size.y;
+                    if (cy >= lh) {
+                        cy = 0;
+                        cx += arrange_.item_size.x;
+                    }
+                }
+            }
+        }
+    }
+    else if (arrange_.mode == Arrange_Content) {
+        /*
+        Content mode:
+        子元素寬度不是固定 如果下個元素超過 就換到下行
+
+        Vertical:
+        |    width    |
+        btn1 check2   <- 超過寬度換到下行
+        arrange1 btn3 <- 超過寬度換到下行
+        chk1 chk2 chk3
+        */
+        if (arrange_.is_vertical) {
+            int lw = local.width();
+            int cx = 0;
+            int cy = 0;
+            int maxh = 0;
+
+            for (auto ob : child) {
+                ob->dock_.mode = Dock_None;
+                int cw = ob->local.width();
+                int ch = ob->local.height();
+
+                // wrap if this item doesn't fit on the current row (except first in row)
+                if (cx + cw > lw && cx > 0) {
+                    cx = 0;
+                    cy += maxh;
+                    maxh = 0;
+                }
+
+                ob->local.x = cx;
+                ob->local.y = cy;
+                ob->local.x2 = cx + cw - 1;
+                ob->local.y2 = cy + ch - 1;
+
+                cx += cw;
+                maxh = std::max(maxh, ch);
+            }
+        }
+        else {
+            // Horizontal: items flow top-to-bottom, wrap to next column when exceeding height
+            int lh = local.height();
+            int cy = 0;
+            int cx = 0;
+            int maxw = 0;
+
+            for (auto ob : child) {
+                ob->dock_.mode = Dock_None;
+                int cw = ob->local.width();
+                int ch = ob->local.height();
+
+                if (cy + ch > lh && cy > 0) {
+                    cy = 0;
+                    cx += maxw;
+                    maxw = 0;
+                }
+
+                ob->local.x = cx;
+                ob->local.y = cy;
+                ob->local.x2 = cx + cw - 1;
+                ob->local.y2 = cy + ch - 1;
+
+                cy += ch;
+                maxw = std::max(maxw, cw);
+            }
+        }
+    }
 }
 
 void Win::Paint(DrawBuffer& drawbuf)
@@ -1098,6 +1437,9 @@ void Win::PaintBorder(DrawBuffer& drawbuf)
 {
     if (draw_border) {
         drawbuf.Border(screen, bg_color, border_style, fg_color);
+        if (!title.empty()) {
+            drawbuf.Text(title, { screen.x + 1, screen.y }, fg_color);
+        }
     }
 }
 
@@ -1160,6 +1502,15 @@ bool Label::ParseCmd(const std::string& cmd, EditLine& el)
     else if (eqi(cmd, "Text")) {
         setText(ParseText(el.tok_line()));
     }
+    else if (eqi(cmd, "Bold")) {
+        bold = el.tok_bool();
+    }
+    else if (eqi(cmd, "Italic")) {
+        italic = el.tok_bool();
+    }
+    else if (eqi(cmd, "Underline")) {
+        underline = el.tok_bool();
+    }
     else if (Win::ParseCmd(cmd, el)) {
     }
     else {
@@ -1178,21 +1529,23 @@ void Label::PaintText(DrawBuffer& drawbuf)
 {
     if (!text.empty()) {
         int tx = clip.x;
+        int ty = clip.y;
         switch (text_algn) {
         case Align_Center:
             tx = clip.x + ((clip.width() - text_width) >> 1);
+            ty = clip.y + ((clip.height() - text_height) >> 1);
             break;
         case Align_End:
             tx = clip.x2 - text_width;
             break;
         }
-        drawbuf.Text(text, { tx, clip.y }, fg_color, bold, italic, underline);
+        drawbuf.Text({ tx, ty }, *this, fg_color);
     }
 }
 
 void Label::setText(const std::string& _text)
 {
-    Text::setText(_text);
+    Text::setText(_text, local.width());
     mgr->is_dirty = true;
 }
 
@@ -1339,7 +1692,7 @@ void Slider::Paint(DrawBuffer& drawbuf)
 }
 
 void Slider::PaintScrollBar(DrawBuffer& drawbuf)
-{   
+{
     if (is_vertical) {
         drawbuf.ScrollBar({ clip.x2 + 1, clip.y }, clip.height(), scroll_value, content_length, is_vertical,
             track_color, thumb_color);
@@ -1354,6 +1707,7 @@ void Slider::Event(const TUI::Event& ev)
 {
     if (mgr->hover_slider_ != this)
         return;
+    int old_scroll_value = scroll_value;
     bool any_click = ev.any_click();
 
     if (any_click) {
@@ -1377,7 +1731,6 @@ void Slider::Event(const TUI::Event& ev)
                     // Click below thumb — scroll down by one page
                     scroll_value = std::min(scroll_max, scroll_value + clip.height());
                 }
-                mgr->is_dirty = true;
             }
         } else {
             Rect scrollbar = { clip.x, clip.y2 + 1, clip.x2, clip.y2 + 1 };
@@ -1392,7 +1745,6 @@ void Slider::Event(const TUI::Event& ev)
                 } else if (click_offset >= thumb_pos + thumb_size) {
                     scroll_value = std::min(scroll_max, scroll_value + clip.width());
                 }
-                mgr->is_dirty = true;
             }
         }
     }
@@ -1401,17 +1753,18 @@ void Slider::Event(const TUI::Event& ev)
     case 4:
         if (scroll_value > 0) {
             scroll_value--;
-            mgr->is_dirty = true;
         }
         break;
     case 5:
         if (scroll_value < scroll_max) {
             scroll_value++;
-            mgr->is_dirty = true;
         }
         break;
     default:
-        return;
+        break;
+    }
+    if (old_scroll_value != scroll_value) {
+        mgr->is_dirty = true;
     }
 }
 
@@ -1471,6 +1824,7 @@ bool Mgr::Update(Terminal& terminal)
         local.y2 = size.y - 1;
         screen = local;
         clip = local;
+        terminal.Resize();
         is_dirty = true;
     }
 

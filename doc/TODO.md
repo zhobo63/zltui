@@ -35,27 +35,6 @@
 
 ---
 
-## 🟡 中优先级（功能不完整）
-
-### 5. Display_Flex / Display_Grid 布局未实现
-- **位置**: `enum Display_` (L307), `Win::CalRect()` (L1006)
-- **问题**: `Display_Flex` 和 `Display_Grid` 已声明但 `CalRect()` 中没有任何对应逻辑，仅支持 `Display_User`（手动指定 Rect）。
-- **影响**: 无法使用自动布局系统。
-- **建议**:
-  - Flex: 实现主轴/交叉轴、flex-grow/flex-shrink、wrap
-  - Grid: 行列定义、单元格分配
-
-### 9. Win::ParseCmd() — Display 属性未处理
-- **位置**: `Win::ParseCmd()` (L956)
-- **问题**: `Display_` 枚举已定义，但 DSL 中没有对应的命令来设置 `display` 属性。
-- **建议**: 添加 `Display` 命令解析并存储到 `Win` 中供 `CalRect()` 使用。
-
-### 10. Win::ParseCmd() — Display 相关属性未处理
-- **位置**: `Win::ParseCmd()` (L956)
-- **问题**: 缺少对 Flex/Grid 布局所需属性的支持（如 `flexGrow`, `gridRow`, `gridCol` 等）。
-
----
-
 ## 🟢 低优先级（改进与增强）
 
 ### 11. utf8_char_width() — Emoji/组合字符处理不完整
@@ -65,11 +44,6 @@
   - 不处理 ZWJ 序列（👨‍👩‍👧‍👦 等多码位 Emoji）
   - 不处理组合变音符号（é = e + ◌́）
 - **建议**: 考虑使用 `wcwidth()` (POSIX) 或集成 Unicode 宽度表。
-
-### 12. DrawBuffer::Text() — 超出边界时未换行
-- **位置**: `DrawBuffer::Text()` (L229)
-- **问题**: 当文本到达 clip 右边界时直接丢弃，不会自动换行到下一行。
-- **建议**: 在 `cur_x + char_width > clip.x2` 时执行换行逻辑。
 
 ### 14. Terminal::Render() — 差异渲染优化空间
 - **位置**: `Terminal::Render()` (L443)
