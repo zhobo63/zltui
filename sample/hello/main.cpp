@@ -1,5 +1,7 @@
 ﻿#define _CRT_SECURE_NO_WARNINGS
 #include <iostream>
+#include <filesystem>
+#include <functional>
 
 #include "zltui.h"
 
@@ -43,103 +45,15 @@ Object Label
 # ── Tools Panel (Left) ─────────────────────
 Object Slider
 {
-    Name toolsPanel
-    Rect 0 2 30 100
+    Name filesPanel
+    Rect 0 2 30 30
     DrawBorder true
     BorderStyle Single
-    Title Tools
+    Title Files
     Dock down 0 0 25 100
     DockOffset 0 0 0 -5
     FgColor BrightCyan
     Arrange Content true
-
-    Object Label
-    {
-        Name toolRead
-        Rect 0 1 23 2
-        Text ✅ Read file
-        FgColor BrightGreen
-    }
-    Object Label
-    {
-        Name toolEdit
-        Rect 0 4 23 5
-        Text ⏳ Edit file\n    Applying changes...
-        FgColor Yellow
-    }
-    Object Label
-    {
-        Name toolSpawn
-        Rect 0 7 23 8
-        Text 🔧 Spawn agent
-        FgColor BrightCyan
-    }
-    Object Label
-    {
-        Name toolDiag
-        Rect 0 10 23 11
-        Text 📊 Diagnostics
-        FgColor White
-    }
-    Object Button
-    {
-        Name toolDeploy
-        Rect 0 14 23 15
-        Text 🚀 Deploy
-        FgColor BrightMagenta
-    }
-    Object Check
-    {
-        Name toolAutoSave
-        Rect 0 18 23 19
-        Text 💾 Auto-save
-        Checked true
-        FgColor Green
-    }
-    Object Check
-    {
-        Name toolDarkMode
-        Rect 0 22 23 23
-        Text 🌙 Dark mode
-        Checked false
-        FgColor BrightBlue
-    }
-    Object Label
-    {
-        Name toolSearch
-        Rect 0 26 23 27
-        Text 🔍 Search files
-        FgColor Yellow
-    }
-    Object Button
-    {
-        Name toolTerminal
-        Rect 0 30 23 31
-        Text 💻 Terminal
-        FgColor BrightWhite
-    }
-    Object Label
-    {
-        Name toolGit
-        Rect 0 34 23 35
-        Text 📦 Git status
-        FgColor Green
-    }
-    Object Check
-    {
-        Name toolNotifications
-        Rect 0 38 23 39
-        Text 🔔 Notifications
-        Checked true
-        FgColor BrightYellow
-    }
-    Object Label
-    {
-        Name toolSettings
-        Rect 0 42 23 43
-        Text ⚙️ Settings
-        FgColor White
-    }
 }
 
 # ── Chat / Output Area (Right) ─────────────
@@ -152,7 +66,6 @@ Object Slider
     Title Output
     Dock Right|Down 25 2 100 100
     DockOffset 0 0 0 -5
-    Vertical true
     BgColor RGB(30,30,40)
 
     Object Label
@@ -162,28 +75,26 @@ Object Slider
         Text [Agent]: Analyzing codebase...
         FgColor BrightCyan
     }
-    Object Slider
+
+    Object Edit
     {
-        Name codeBlock
-        Rect 0 4 50 12
+        Name codeText
+        Rect 1 4 48 11
         DrawBorder true
         BorderStyle none
+        Dock right 0 0 100 100
+        DockOffset 0 0 -1 0
+        Text # this is foo\nvoid foo() {\n    bar();\n}
+        FgColor BrightGreen
         BgColor RGB(20,20,30)
-
-        Object Label
-        {
-            Name codeText
-            Rect 1 1 48 10
-            Text void foo() {\n    bar();\n}
-            FgColor BrightGreen
-        }
     }
+
     Object Label
     {
         Name agentMsg2
         Rect 0 15 76 16
         Text [Agent]: Changes applied. Ready for next task.
-        FgColor White
+        FgColor BrightCyan
     }
 }
 
@@ -207,7 +118,86 @@ Object Edit
 }
     )");
 
-    TUI::Slider* toolsPanel = mgr.GetUI<TUI::Slider>("toolsPanel");
+    TUI::Slider* filesPanel = mgr.GetUI<TUI::Slider>("filesPanel");
+    TUI::Slider* chatArea = mgr.GetUI<TUI::Slider>("chatArea");
+    TUI::Edit* inputBar = mgr.GetUI<TUI::Edit>("inputBar");
+
+    std::filesystem::path current_path = ".";
+
+    std::function<void()> populate_files_panel = [&]() {
+        // Clear existing children
+        filesPanel->child.clear();
+        filesPanel->scroll_value.y = 0;
+        filesPanel->mgr->notify_ = nullptr;
+
+        int file_y = 1;
+
+        // Add ".." button if not at root
+        if (current_path.has_parent_path()) {
+
+            TUI::Button* btn = new TUI::Button(&mgr);
+            btn->name = "..";
+            btn->local = { 1, file_y, filesPanel->clip.width() - 2, file_y };
+            btn->setText(u8"📁 ..");
+            btn->dock_.mode = TUI::Dock_Right;
+            btn->dock_.dock = { 0, 0, 100, 100 };
+            btn->text_algn = TUI::Align_Start;
+
+            btn->on_click = [&current_path, &populate_files_panel]() {
+                current_path = current_path.parent_path();
+                populate_files_panel();
+            };
+            filesPanel->AddChild(TUI::WinPtr(btn));
+            file_y += 1;
+        }
+
+        for (const auto& entry : std::filesystem::directory_iterator(current_path)) {
+            bool is_dir = entry.is_directory();
+            std::string icon = is_dir ? u8"📁" : u8"📄";
+            std::string filename = entry.path().filename().string();
+            std::filesystem::path entry_path = entry.path();
+
+            TUI::Button* btn = new TUI::Button(&mgr);
+            btn->name = filename;
+            btn->local = { 1, file_y, filesPanel->clip.width() - 2, file_y };
+            btn->setText(icon + " " + filename);
+            btn->dock_.mode = TUI::Dock_Right;
+            btn->dock_.dock = { 0, 0, 100, 100 };
+            btn->text_algn = TUI::Align_Start;
+
+            //btn->bg_color = file_y % 2 == 1;
+            btn->on_click = [&current_path, &populate_files_panel, inputBar, is_dir, entry_path]() mutable {
+                if (is_dir) {
+                    current_path = entry_path;
+                    populate_files_panel();
+                }
+                else {
+                    inputBar->setText(inputBar->text + entry_path.string());
+                }
+            };
+            filesPanel->AddChild(TUI::WinPtr(btn));
+            file_y += 1;
+        }
+    };
+
+    populate_files_panel();
+
+    inputBar->on_key = [inputBar, chatArea, &mgr](const TUI::Event &ev) -> bool {
+        if (!ev.ctrl && !ev.shift && ev.vkey == VK_RETURN) {
+            TUI::Label* lb = new TUI::Label(&mgr);
+            int last_y = 0;
+            for (auto ch : chatArea->child) {
+                last_y = std::max(last_y, ch->local.y2 + 1);
+            }
+            lb->local = { 0,last_y,chatArea->clip.width() - 1, last_y + 5 };
+            lb->setText(inputBar->text);
+            inputBar->setText("");
+            chatArea->AddChild(TUI::WinPtr(lb));
+            chatArea->scroll_value.y = last_y + 5 - chatArea->clip.height();
+            return true;
+        }
+        return false;
+        };
 
     while (!quit) {
         if (mgr.Update(terminal)) {

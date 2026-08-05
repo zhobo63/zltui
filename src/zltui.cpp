@@ -278,6 +278,7 @@ void Text::setText(const std::string& _text, int wrap)
         chars.push_back(ch);
         p += n; len -= n;
     }
+    position.push_back({ cx, cy });
 
     text_width = std::max(text_width, cx);
     text_height = cy;
@@ -350,7 +351,7 @@ size_t Text::byte_offset_of(int idx) const
 int Text::cur_idx_of(const Point& cursor) const
 {
     int idx = 0;
-    for (size_t i = 0; i < chars.size(); i++) {
+    for (size_t i = 0; i < position.size(); i++) {
         auto& pos = position[i];
         if (pos.y == cursor.y)
             idx = i;
@@ -454,7 +455,7 @@ Point Text::left(int idx)
 }
 Point Text::right(int idx)
 {
-    if (idx < chars.size()) {
+    if (idx < position.size()) {
         idx++;
     }
     return pos_of(idx);
@@ -464,7 +465,7 @@ Point Text::up(int idx)
     Point pos = pos_of(idx);
     int target_y = pos.y - 1;
     if (target_y >= 0) {
-        for (size_t i = 0; i < chars.size(); i++) {
+        for (size_t i = 0; i < position.size(); i++) {
             if (position[i].y == target_y && position[i].x <= pos.x)
                 idx = static_cast<int>(i);
         }
@@ -476,11 +477,11 @@ Point Text::down(int idx)
 {
     Point pos = pos_of(idx);
     int target_y = pos.y + 1;
-    for (size_t i = 0; i < chars.size(); i++) {
+    for (size_t i = 0; i < position.size(); i++) {
         if (position[i].y == target_y && position[i].x <= pos.x)
             idx = static_cast<int>(i);
     }
-    pos = pos_of(idx >= 0 ? idx : static_cast<int>(chars.size()));
+    pos = pos_of(idx >= 0 ? idx : static_cast<int>(position.size()));
     return pos;
 }
 Point Text::home(int idx)
@@ -493,7 +494,7 @@ Point Text::end(int idx)
 {
     Point pos = pos_of(idx);
     int target_y = pos.y;
-    for (int i = static_cast<int>(chars.size()) - 1; i >= 0; i--) {
+    for (int i = static_cast<int>(position.size()) - 1; i >= 0; i--) {
         if (position[i].y == target_y) {
             idx = i;
             break;
@@ -1293,7 +1294,8 @@ std::string EditLine::next_line()
 {
     current++;
     for (; current < lines.size(); ++current) {
-        if (lines[current].empty())
+        tok_ = 0;
+        if (tok().empty())
             continue;
         return lines[current];
     }
@@ -1455,6 +1457,15 @@ Arrange_ ParseArrange(const std::string& tok)
     return Arrange_None;
 }
 
+Autosize_ ParseAutosize(const std::string& tok)
+{
+    if (eqi(tok, "None"))         return Autosize_None;
+    if (eqi(tok, "TextWidth"))    return Autosize_TextWidth;
+    if (eqi(tok, "TextHeight"))   return Autosize_TextHeight;
+    if (eqi(tok, "TextSize"))     return Autosize_TextSize;
+    return Autosize_None;
+}
+
 /// <summary>
 /// Win
 /// </summary>
@@ -1492,7 +1503,7 @@ bool Win::Parse(EditLine& el)
 
         }
         else {
-
+            
         }
         cmd = el.next_tok();
     }
@@ -1564,6 +1575,9 @@ bool Win::ParseCmd(const std::string &cmd, EditLine& el)
             arrange_.item_size.y = el.tok_int();
         }
     }
+    else if (eqi(cmd, "Autosize")) {
+        autosize_ = ParseAutosize(el.tok());
+    }
     else {
         ret = false;
     }
@@ -1588,22 +1602,26 @@ void Win::CalRect(Win* parent)
     int lw = local.width();
     int lh = local.height();
     if (dock_.mode & Dock_Left) {
-        local.x = pt.x + (pw - 1) * dock_.dock.x / 100 + dock_.offset.x;
+        local.x = (pw - 1) * dock_.dock.x / 100 + dock_.offset.x;
     }
     if (dock_.mode & Dock_Top) {
-        local.y = pt.y + (ph - 1) * dock_.dock.y / 100 + dock_.offset.y;
+        local.y = (ph - 1) * dock_.dock.y / 100 + dock_.offset.y;
     }
     if (dock_.mode & Dock_Right) {
-        local.x2 = pt.x + (pw - 1) * dock_.dock.x2 / 100 + dock_.offset.x2;
+        local.x2 = (pw - 1) * dock_.dock.x2 / 100 + dock_.offset.x2;
     }
     if (dock_.mode & Dock_Down) {
-        local.y2 = pt.y + (ph - 1) * dock_.dock.y2 / 100 + dock_.offset.y2;
+        local.y2 = (ph - 1) * dock_.dock.y2 / 100 + dock_.offset.y2;
     }
     if (dock_.mode & Dock_Right_Pane) {
         local.y = local.y2 - lw;
     }
     if (dock_.mode & Dock_Down_Pane) {
         local.x = local.x2 - lh;
+    }
+    switch (autosize_) {
+    case Autosize_None:
+        break;
     }
 
     screen = local.move(pt.x, pt.y);
@@ -2223,6 +2241,7 @@ void Edit::setText(const std::string& _text)
 {
     Text::setText(_text, local.width());
     selected.unselect();
+    cursor = { 0,0 };
     mgr->is_dirty = true;
 }
 
@@ -2281,6 +2300,7 @@ void Edit::Event(const TUI::Event& ev)
             selected.unselect();
             cursor = pos_of(idx);
         }
+        mgr->cursor = { clip.x + cursor.x, clip.y + cursor.y };
         mgr->is_dirty = true;
     }
     else if (ev.type == EventType_Key) {
@@ -2375,8 +2395,10 @@ void Edit::Event(const TUI::Event& ev)
             handled = false;
         }
 
-        if (handled)
+        if (handled) {
+            mgr->cursor = { clip.x + cursor.x, clip.y + cursor.y };
             mgr->is_dirty = true;
+        }
     }
 }
 
@@ -2486,6 +2508,9 @@ bool Mgr::Update(Terminal& terminal)
                 hover_slider_->Event(ev);
             }
         }
+    }
+    if (is_dirty) {
+        std::cout << CursorMove(cursor.x, cursor.y);
     }
     return is_dirty;
 }

@@ -146,6 +146,8 @@ struct Color {
     static Color Parse(const std::string& param);
 };
 
+#define VK_EOF 0x07
+
 struct Char {
     union {
         uint8_t code[4];
@@ -392,6 +394,16 @@ struct Arrange
     Point item_size = { 0,0 };     // size per item (w,h)
 };
 
+enum Autosize_
+{
+    Autosize_None,
+    Autosize_TextWidth,
+    Autosize_TextHeight,
+    Autosize_TextSize,
+};
+
+Autosize_ ParseAutosize(const std::string& tok);
+
 struct Win
 {
     Win(Mgr* mgr) : mgr(mgr) {}
@@ -428,6 +440,7 @@ struct Win
     Color fg_color = AnsiColor_White;
     Dock dock_;
     Arrange arrange_;
+    Autosize_ autosize_ = Autosize_None;
 
     Rect local;
     Rect screen;
@@ -530,6 +543,7 @@ struct Mgr : Win
     Win* notify_ = nullptr;     //input focus
     Win* hover_ = nullptr;
     Win* hover_slider_ = nullptr;
+    Point cursor;
 };
 
 NAMESPACE_END
