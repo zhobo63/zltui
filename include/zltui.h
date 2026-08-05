@@ -282,15 +282,19 @@ struct Event
     int x = 0;
     int y = 0;
     int clicks = 0;             // clicks: number of clicks (1=single, 2=double)
-    std::string paste_text;
     bool first_down[3] = { false };
 
     bool shift = false;
     bool ctrl = false;
     bool alt = false;
+    bool is_vt = false;
+
+    std::string paste_text;
+    std::string seq;
 
     bool any_button_down() const { return type == EventType_Mouse && button >= 1 && button <= 3; }
     bool any_first_down() const { return first_down[0] || first_down[1] || first_down[2]; }
+    void reset() { type = EventType_None; seq.clear(); paste_text.clear(); key = 0; vkey = 0; is_vt = false; }
 };
 
 class Terminal

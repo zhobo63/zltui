@@ -300,7 +300,7 @@ int Text::char_at(int x, int y) const
         if (position[i].y == y && x >= position[i].x) {
             if (x < position[i].x + chars[i].char_width)
                 best_idx = static_cast<int>(i);
-            else if (chars[i].ch == '\n') 
+            else if (chars[i].ch == '\n')
                 best_idx = static_cast<int>(i);
             else
                 best_idx = static_cast<int>(i) + 1;
@@ -1002,8 +1002,17 @@ void Terminal::EnableRawMode()
                 ENABLE_PROCESSED_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT);
     dwMode |= ENABLE_EXTENDED_FLAGS | ENABLE_WINDOW_INPUT | ENABLE_MOUSE_INPUT;
 
+    if (SetConsoleMode(
+        hIn, dwMode | ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_MOUSE_INPUT)) {
+        vtSupported_ = true;
+        dwMode |= ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_MOUSE_INPUT;
+    }
+    else {
+        // Fallback to legacy mouse input
+        dwMode |= ENABLE_MOUSE_INPUT;
+        vtSupported_ = false;
+    }
     SetConsoleMode(hIn, dwMode);
-    vtInputSupported_ = false;
 
     // Handle Ctrl+C cleanup
     //SetConsoleCtrlHandler(
@@ -1132,6 +1141,249 @@ static uint32_t map_key_event(const KEY_EVENT_RECORD& key)
     }
 }
 
+// Per-thread state for VT sequence parsing.
+static thread_local bool        s_in_bracketed_paste = false;
+static thread_local std::string s_paste_buffer;
+// Small buffer used to detect the end-of-paste escape sequence character-by-character.
+static thread_local std::string s_escape_detect;  // max length ~6
+
+// Parse a complete CSI mouse event: ESC [ < Cb ; Cx ; Cy M/m
+// Returns true if the sequence was consumed and ev is populated.
+static bool parse_sgr_mouse(Event &ev)
+{
+    const std::string& seq = ev.seq;
+    // Format: "\x1b[<Cb;Cx;CyM"  (button release uses 'm')
+
+    size_t p = 3;
+    auto next_semi = [&]() -> int {
+        int val = 0;
+        while (p < seq.size() && seq[p] == ';') { ++p; break; }
+        while (p < seq.size() && seq[p] >= '0' && seq[p] <= '9')
+            val = val * 10 + (seq[p++] - '0');
+        return val;
+    };
+
+    int cb = next_semi(); // button code
+    int cx = next_semi(); // column (1-based)
+    int cy = next_semi(); // row    (1-based)
+
+    if (p >= seq.size()) return false;
+    bool is_release = (seq[p] == 'm');
+
+    ev.type = EventType_Mouse;
+    ev.x = cx - 1; // convert to 0-based
+    ev.y = cy - 1;
+
+    // Button code: 0=left, 1=middle, 2=right, 3=move,
+    //              4=scroll up, 5=scroll down, 6=h-scroll left, 7=h-scroll right
+    switch (cb & 3) {
+    case 0: ev.button = is_release ? 0 : 1; break;
+    case 1: ev.button = is_release ? 0 : 2; break;
+    case 2: ev.button = is_release ? 0 : 3; break;
+    case 3: ev.button = 0;            break; // motion
+    }
+
+    // Scroll buttons (bit 2 set)
+    if ((cb & 4) != 0) {
+        switch (cb & 7) {
+        case 4: ev.button = 4; break; // scroll up
+        case 5: ev.button = 5; break; // scroll down
+        case 6: ev.button = 6; break; // h-scroll left
+        case 7: ev.button = 7; break; // h-scroll right
+        }
+    }
+
+    return true;
+}
+
+// Check whether the escape_detect buffer matches a prefix of "\x1b[201~".
+// Returns true if it's still a possible match, false if it has diverged.
+static bool is_paste_end_prefix(const std::string& buf)
+{
+    static const char end_marker[] = "\x1b[201~";
+    for (size_t i = 0; i < buf.size(); ++i) {
+        if (buf[i] != end_marker[i])
+            return false;
+    }
+    return true;
+}
+
+// Emit a VT-parsed event: mark is_vt and store the raw sequence.
+static void emit_vt_event(Event &ev, EventType_ type, const std::string& seq)
+{
+    ev.type = type;
+    ev.is_vt = true;
+    ev.seq = seq;
+    ev.key = 0;
+}
+
+// Emit a VT-parsed key event: set vkey and clear the sequence buffer.
+static bool emit_vt_key(Event &ev)
+{
+    ev.type = EventType_Key;
+    ev.is_vt = false;  // not needed — caller will treat as normal key
+    ev.seq.clear();
+    ev.key = 0;
+    return true;  // fully parsed, ready to push
+}
+
+bool parse_vt_sequence(INPUT_RECORD &rec, Event &ev){
+    auto& key = rec.Event.KeyEvent;
+    uint16_t ch = key.uChar.UnicodeChar;
+
+    // Only process printable characters and ESC from VT input.
+    // Control keys (arrows, function keys) are handled by the normal path.
+    if (ch == 0 && key.wVirtualKeyCode != VK_ESCAPE)
+        return false;
+
+    char byte = static_cast<char>(ch);
+
+    // Inside bracketed paste — accumulate raw characters until end marker.
+    if (s_in_bracketed_paste) {
+        s_escape_detect += byte;
+
+        // If we see ESC, start watching for the end marker "\x1b[201~".
+        // Otherwise, just append to paste buffer and reset escape detection.
+        if (byte == '\x1b') {
+            // Start of potential end marker — don't add to paste yet.
+        } else if (!s_escape_detect.empty() && s_escape_detect[0] == '\x1b') {
+            // We're in the middle of a potential escape sequence.
+            if (is_paste_end_prefix(s_escape_detect)) {
+                // Still matching — keep watching. When complete, emit paste event.
+                if (s_escape_detect.size() == 6) {
+                    ev.paste_text = s_paste_buffer;
+                    emit_vt_event(ev, EventType_Paste, "\x1b[201~");
+                    s_in_bracketed_paste = false;
+                    s_paste_buffer.clear();
+                    s_escape_detect.clear();
+                    return true;
+                }
+            } else {
+                // Not the end marker — flush escape_detect into paste buffer.
+                s_paste_buffer += s_escape_detect;
+                s_escape_detect.clear();
+            }
+        } else {
+            // Normal character during paste.
+            s_paste_buffer += byte;
+        }
+
+        return true;  // consumed, still buffering
+    }
+
+    // Normal VT sequence buffering.
+    ev.key = ch;
+    ev.seq += byte;
+
+    if (ev.key == 13) {
+        return false;
+    }
+
+    // If we just received ESC, wait for more characters — don't parse yet.
+    if (byte == '\x1b') {
+        ev.is_vt = true;
+        return true;  // consumed, but incomplete
+    }
+    if (ev.is_vt && ev.seq.length() < 3)
+        return true;
+    // Try to parse the accumulated buffer as a complete sequence.
+    size_t len = ev.seq.length();
+    if (len >= 6 && ev.seq.substr(0,6) == "\x1b[200~") {
+        s_in_bracketed_paste = true;
+    }
+    else if (len >= 6 && ev.seq.substr(0, 6) == "\x1b[201~") {
+        // End-of-paste received outside paste mode — consume silently.
+        s_in_bracketed_paste = false;
+        return true;  // consumed
+    }
+    else if (len >3 && ev.seq[0]=='\x1b' && ev.seq[1] == '[' && ev.seq[2] == '<') {
+        if (ch == 'M' || ch == 'm') {
+            if (parse_sgr_mouse(ev)) {
+                ev.type = EventType_Mouse;
+            }
+        }
+    }
+/*
+ * CSI Key sequences:
+ *
+ *   Arrow keys:       \x1b[A (Up)  \x1b[B (Down)  \x1b[C (Right)  \x1b[D (Left)
+ *   Home / End:       \x1b[H / \x1b[F    or    \x1b[1~ / \x1b[4~
+ *   Page Up/Down:     \x1b[5~ / \x1b[6~
+ *   Delete / Insert:  \x1b[3~ / \x1b[2~
+ *
+ *   F1–F4 (SS3):      \x1bOP / \x1bOQ / \x1bOR / \x1bOS
+ *   F5–F12:           \x1b[15~ .. \x1b[24~
+ *
+ *   Windows VT Input modifier format:
+ *     \x1b[<Cb;Modifier;Key M/m
+ *     Modifier bits: 1=Shift, 2=Ctrl, 4=Alt (combined)
+ */
+    else if (len == 3 && ev.seq[0] == '\x1b' && ev.seq[1] == '[') {
+        // CSI + single letter — arrow keys, Home/End
+        char term = ev.seq[2];
+        switch (term) {
+            case 'A': ev.vkey = VK_UP;    break;
+            case 'B': ev.vkey = VK_DOWN;  break;
+            case 'C': ev.vkey = VK_RIGHT; break;
+            case 'D': ev.vkey = VK_LEFT;  break;
+            case 'H': ev.vkey = VK_HOME;  break;
+            case 'F': ev.vkey = VK_END;   break;
+            default:  goto not_complete;  // unknown CSI letter — keep buffering
+        }
+        return emit_vt_key(ev);
+    }
+    else if (len == 3 && ev.seq[0] == '\x1b' && ev.seq[1] == 'O') {
+        // SS3 — F1–F4
+        char term = ev.seq[2];
+        switch (term) {
+            case 'P': ev.vkey = VK_F1;  break;
+            case 'Q': ev.vkey = VK_F2;  break;
+            case 'R': ev.vkey = VK_F3;  break;
+            case 'S': ev.vkey = VK_F4;  break;
+            default:  goto not_complete;
+        }
+        return emit_vt_key(ev);
+    }
+    else if (len >= 5 && ev.seq[0] == '\x1b' && ev.seq[1] == '[' && ev.seq.back() == '~') {
+        // CSI n~ — Home/End/PgUp/PgDown/Del/Ins/F5-F12
+        std::string num = ev.seq.substr(2, len - 4);
+        int n = 0;
+        for (char c : num) { if (c >= '0' && c <= '9') n = n * 10 + (c - '0'); }
+        switch (n) {
+            case 1: ev.vkey = VK_HOME;     break;
+            case 2: ev.vkey = VK_INSERT;   break;
+            case 3: ev.vkey = VK_DELETE;   break;
+            case 4: ev.vkey = VK_END;      break;
+            case 5: ev.vkey = VK_PRIOR;    break; // Page Up
+            case 6: ev.vkey = VK_NEXT;     break; // Page Down
+            case 11: ev.vkey = VK_F1;      break;
+            case 12: ev.vkey = VK_F2;      break;
+            case 13: ev.vkey = VK_F3;      break;
+            case 14: ev.vkey = VK_F4;      break;
+            case 15: ev.vkey = VK_F5;      break;
+            case 17: ev.vkey = VK_F6;      break;
+            case 18: ev.vkey = VK_F7;      break;
+            case 19: ev.vkey = VK_F8;      break;
+            case 20: ev.vkey = VK_F9;      break;
+            case 21: ev.vkey = VK_F10;     break;
+            case 23: ev.vkey = VK_F11;     break;
+            case 24: ev.vkey = VK_F12;     break;
+            default: goto not_complete;
+        }
+        return emit_vt_key(ev);
+    }
+
+not_complete:
+    // Buffer is growing but not yet a recognized sequence.
+    // If it gets too long, discard and treat as normal input.
+    if (ev.seq.size() > 16) {
+        OutputDebugStringA(ev.seq.c_str());
+        return false;
+    }
+
+    return ev.is_vt;  // consumed, waiting for more
+}
+
 void Terminal::event_thread()
 {
     INPUT_RECORD rec;
@@ -1140,27 +1392,56 @@ void Terminal::event_thread()
 
     DWORD prev_btn_state = 0;
 
+    Event ev;
     while (s_running.load()) {
         ReadConsoleInputW(hIn, &rec, 1, &count);
         if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown) {
-            Event ev;
-            ev.type = EventType_Key;
-            ev.vkey = rec.Event.KeyEvent.wVirtualKeyCode;
-            ev.key = map_key_event(rec.Event.KeyEvent);
-            ev.shift = (rec.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) != 0;
-            ev.ctrl = (rec.Event.KeyEvent.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
-            ev.alt = (rec.Event.KeyEvent.dwControlKeyState & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
+            // Try to parse VT/ANSI escape sequences first.
+            bool vt_parsed = parse_vt_sequence(rec, ev);
 
-            if (ev.key != 0 || ev.vkey != 0) {
+            if (!vt_parsed) {
+                ev.type = EventType_Key;
+                ev.vkey = rec.Event.KeyEvent.wVirtualKeyCode;
+                ev.key = map_key_event(rec.Event.KeyEvent);
+                ev.shift = (rec.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) != 0;
+                ev.ctrl = (rec.Event.KeyEvent.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
+                ev.alt = (rec.Event.KeyEvent.dwControlKeyState & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
+                if (ev.key == 13) {
+                    ev.vkey = VK_RETURN;
+                    ev.key = 0;
+                }
+            }
+
+            // Push the event if it carries meaningful data.
+            if (ev.type == EventType_Mouse) {
+                ev.first_down[0] = ev.button == 1 && (prev_btn_state & FROM_LEFT_1ST_BUTTON_PRESSED) == 0;
+                ev.first_down[1] = ev.button == 2 && (prev_btn_state & RIGHTMOST_BUTTON_PRESSED) == 0;
+                ev.first_down[2] = ev.button == 3 && (prev_btn_state & FROM_LEFT_2ND_BUTTON_PRESSED) == 0;
+                prev_btn_state = 0;
+                if (ev.button == 1) prev_btn_state |= FROM_LEFT_1ST_BUTTON_PRESSED;
+                if (ev.button == 2) prev_btn_state |= RIGHTMOST_BUTTON_PRESSED;
+                if (ev.button == 3) prev_btn_state |= FROM_LEFT_2ND_BUTTON_PRESSED;
+                std::lock_guard<std::mutex> lock(s_event_mutex);
+                s_events.push_back(ev);
+                ev.reset();
+
+
+            }
+            else if (ev.type == EventType_Paste) {
+                std::lock_guard<std::mutex> lock(s_event_mutex);
+                s_events.push_back(ev);
+                ev.reset();
+            }
+            else if (ev.type == EventType_Key && (ev.key != 0 || ev.vkey != 0)) {
                 std::lock_guard<std::mutex> lock(s_event_mutex);
                 const WORD repeat = rec.Event.KeyEvent.wRepeatCount ? rec.Event.KeyEvent.wRepeatCount : 1;
                 for (WORD i = 0; i < repeat; ++i) {
                     s_events.push_back(ev);
                 }
+                ev.reset();
             }
         }
         else if (rec.EventType == MOUSE_EVENT) {
-            Event ev;
             ev.type = EventType_Mouse;
             ev.x = rec.Event.MouseEvent.dwMousePosition.X;
             ev.y = rec.Event.MouseEvent.dwMousePosition.Y;
@@ -1193,6 +1474,7 @@ void Terminal::event_thread()
 
             std::lock_guard<std::mutex> lock(s_event_mutex);
             s_events.push_back(ev);
+            ev.reset();
         }
     }
 }
@@ -1503,7 +1785,7 @@ bool Win::Parse(EditLine& el)
 
         }
         else {
-            
+
         }
         cmd = el.next_tok();
     }
