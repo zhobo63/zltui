@@ -1275,10 +1275,6 @@ bool parse_vt_sequence(INPUT_RECORD &rec, Event &ev){
     ev.key = ch;
     ev.seq += byte;
 
-    if (ev.key == 13) {
-        return false;
-    }
-
     // If we just received ESC, wait for more characters — don't parse yet.
     if (byte == '\x1b') {
         ev.is_vt = true;
@@ -1408,7 +1404,6 @@ void Terminal::event_thread()
                 ev.alt = (rec.Event.KeyEvent.dwControlKeyState & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
                 if (ev.key == 13) {
                     ev.vkey = VK_RETURN;
-                    ev.key = 0;
                 }
             }
 
