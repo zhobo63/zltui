@@ -112,6 +112,8 @@ struct Point {
     int x = 0, y = 0;
 
     void set(int _x, int _y) { x = _x; y = _y; }
+    bool operator==(const Point& pt) const { return x == pt.x && y == pt.y; }
+    bool operator!=(const Point& pt) const { return x != pt.x || y != pt.y; }
 };
 
 struct Rect {
@@ -461,10 +463,11 @@ struct Slider : Win
     Point GetClipPos() const override;
     virtual void PaintScrollBar(DrawBuffer& drawbuf);
 
-    bool is_vertical = true;
-    int scroll_value = 0;
-    int scroll_max = 0;
-    int content_length = 0;
+    bool is_scroll_x = false;
+    bool is_scroll_y = true;
+    Point scroll_value = { 0,0 };
+    Point scroll_max = { 0,0 };
+    Point content_length = { 0,0 };
     Color color_track = COLOR_TRACK;
     Color color_thumb = COLOR_THUMB;
 };

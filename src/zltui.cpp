@@ -1700,8 +1700,11 @@ void Check::Click()
 bool Slider::ParseCmd(const std::string& cmd, EditLine& el)
 {
     bool ret = true;
-    if (eqi(cmd, "Vertical")) {
-        is_vertical = el.tok_bool();
+    if (eqi(cmd, "ScrollX")) {
+        is_scroll_x = el.tok_bool();
+    }
+    else if (eqi(cmd, "ScrollY")) {
+        is_scroll_y = el.tok_bool();
     }
     else if (eqi(cmd, "TrackColor")) {
         color_track = Color::Parse(el.tok());
@@ -1720,32 +1723,27 @@ bool Slider::ParseCmd(const std::string& cmd, EditLine& el)
 void Slider::CalRect(Win* parent)
 {
     Win::CalRect(parent);
-    if (is_vertical) {
+    content_length = { 0,0 };
+    if (is_scroll_y) {
         clip.x2--;
+        for (auto ch : child) {
+            content_length.y = std::max(content_length.y, ch->local.y2 + 1);
+        }
+        if (content_length.y < clip.height()) {
+            content_length.y = clip.height();
+        }
+        scroll_max.y = content_length.y - clip.height();
     }
-    else {
+    if (is_scroll_x) {
         clip.y2--;
-    }
-    content_length = 0;
-    if (is_vertical) {
         for (auto ch : child) {
-            content_length = std::max(content_length, ch->local.y2 + 1);
+            content_length.x = std::max(content_length.x, ch->local.x2 + 1);
         }
-        if (content_length < clip.height()) {
-            content_length = clip.height();
+        if (content_length.x < clip.width()) {
+            content_length.x = clip.width();
         }
-        scroll_max = content_length - clip.height();
+        scroll_max.x = content_length.x - clip.width();
     }
-    else {
-        for (auto ch : child) {
-            content_length = std::max(content_length, ch->local.x2 + 1);
-        }
-        if (content_length < clip.width()) {
-            content_length = clip.width();
-        }
-        scroll_max = content_length - clip.width();
-    }
-
 }
 
 void Slider::Paint(DrawBuffer& drawbuf)
@@ -1757,12 +1755,12 @@ void Slider::Paint(DrawBuffer& drawbuf)
 
 void Slider::PaintScrollBar(DrawBuffer& drawbuf)
 {
-    if (is_vertical) {
-        drawbuf.ScrollBar({ clip.x2 + 1, clip.y }, clip.height(), scroll_value, content_length, is_vertical,
+    if (is_scroll_y) {
+        drawbuf.ScrollBar({ clip.x2 + 1, clip.y }, clip.height(), scroll_value.y, content_length.y, true,
             color_track, color_thumb);
     }
-    else {
-        drawbuf.ScrollBar({ clip.x, clip.y2 + 1 }, clip.width(), scroll_value, content_length, is_vertical,
+    if (is_scroll_x) {
+        drawbuf.ScrollBar({ clip.x, clip.y2 + 1 }, clip.width(), scroll_value.x, content_length.x, false,
             color_track, color_thumb);
     }
 }
@@ -1771,43 +1769,43 @@ void Slider::Event(const TUI::Event& ev)
 {
     if (mgr->hover_slider_ != this)
         return;
-    int old_scroll_value = scroll_value;
+    Point old_scroll_value = scroll_value;
     bool any_click = ev.any_click();
 
     if (any_click) {
-        int max_scroll = content_length - clip.height();
-        if (max_scroll <= 0)
-            return;
         Point pt = { ev.x, ev.y };
-        int thumb_size = std::max(1, clip.height() * clip.height() / content_length);
-        int thumb_pos = (int)((float)scroll_value / max_scroll * (clip.height() - thumb_size));
 
-        if (is_vertical) {
+        if (is_scroll_y) {
             Rect scrollbar = { clip.x2 + 1, clip.y, clip.x2 + 1, clip.y2 };
             // Vertical scrollbar at x=clip.x2+1, y=[clip.y .. clip.y+length-1]
             if (scrollbar.inside(pt)) {
                 int click_offset = ev.y - clip.y;
+                int max_scroll = content_length.y - clip.height();
+                int thumb_size = std::max(1, clip.height() * clip.height() / content_length.y);
+                int thumb_pos = (int)((float)scroll_value.y / max_scroll * (clip.height() - thumb_size));
+
                 if (click_offset < thumb_pos) {
                     // Click above thumb — scroll up by one page
-                    scroll_value = std::max(0, scroll_value - clip.height());
+                    scroll_value.y = std::max(0, scroll_value.y - clip.height());
                 }
                 else if (click_offset >= thumb_pos + thumb_size) {
                     // Click below thumb — scroll down by one page
-                    scroll_value = std::min(scroll_max, scroll_value + clip.height());
+                    scroll_value.y = std::min(scroll_max.y, scroll_value.y + clip.height());
                 }
             }
-        } else {
+        } 
+        if (is_scroll_x) {
             Rect scrollbar = { clip.x, clip.y2 + 1, clip.x2, clip.y2 + 1 };
             // Horizontal scrollbar at y=clip.y2+1, x=[clip.x .. clip.x+length-1]
             if (scrollbar.inside(pt)) {
                 int click_offset = ev.x - clip.x;
-                max_scroll = content_length - clip.width();
-                thumb_size = std::max(1, clip.width() * clip.width() / content_length);
-                thumb_pos = (int)((float)scroll_value / max_scroll * (clip.width() - thumb_size));
+                int max_scroll = content_length.x - clip.width();
+                int thumb_size = std::max(1, clip.width() * clip.width() / content_length.x);
+                int thumb_pos = (int)((float)scroll_value.x / max_scroll * (clip.width() - thumb_size));
                 if (click_offset < thumb_pos) {
-                    scroll_value = std::max(0, scroll_value - clip.width());
+                    scroll_value.x = std::max(0, scroll_value.x - clip.width());
                 } else if (click_offset >= thumb_pos + thumb_size) {
-                    scroll_value = std::min(scroll_max, scroll_value + clip.width());
+                    scroll_value.x = std::min(scroll_max.x, scroll_value.x + clip.width());
                 }
             }
         }
@@ -1815,13 +1813,27 @@ void Slider::Event(const TUI::Event& ev)
 
     switch (ev.button) {
     case 4:
-        if (scroll_value > 0) {
-            scroll_value--;
+        if (is_scroll_y) {
+            if (scroll_value.y > 0) {
+                scroll_value.y--;
+            }
+        }
+        else if (is_scroll_x) {
+            if (scroll_value.x > 0) {
+                scroll_value.x--;
+            }
         }
         break;
     case 5:
-        if (scroll_value < scroll_max) {
-            scroll_value++;
+        if (is_scroll_y) {
+            if (scroll_value.y < scroll_max.y) {
+                scroll_value.y++;
+            }
+        }
+        else if(is_scroll_x) {
+            if (scroll_value.x < scroll_max.x) {
+                scroll_value.x++;
+            }
         }
         break;
     default:
@@ -1834,9 +1846,7 @@ void Slider::Event(const TUI::Event& ev)
 
 Point Slider::GetClipPos() const
 {
-    if (is_vertical)
-        return { clip.x, clip.y - scroll_value };
-    return { clip.x - scroll_value, clip.y };
+    return { clip.x - scroll_value.x, clip.y - scroll_value.y };
 }
 
 ///
