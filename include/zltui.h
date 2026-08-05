@@ -162,8 +162,10 @@ struct Selection {
     int start = -1;
     int end = -1;
 
+    bool has_selection() const { return start >= 0 && end >= 0; }
     bool is_selected(int pos) const { return start >= 0 && end >= 0 && pos >= start && pos <= end; }
     void unselect() { start = -1; end = -1; }
+    void valid() { if (start > end) std::swap(start, end); }
 };
 
 struct Text {
@@ -176,11 +178,30 @@ struct Text {
     bool underline = false;
     int text_width = 0;
     int text_height = 0;
+    int wrap_width = 0;
 
     Selection selected;
     Color color_selected;
 
-    virtual void setText(const std::string& _text, int wrap = 0);
+    void setText(const std::string& _text, int wrap);
+    std::string get_selected() const;
+    int char_at(int x, int y) const;
+    Point pos_of(int idx) const;                // Helper: get display position from char index
+    size_t byte_offset_of(int idx) const;       // Helper: get byte offset of char index in the string
+    int cur_idx_of(const Point& cursor) const;  // Helper: find current char index from cursor position
+    void select_word(int x, int y);             // select word at clicked position
+    void reparse();                             // Helper: reparse text without clearing selection
+    int delete_selected(int idx);
+    int enter(int idx);
+    int backspace(int idx);
+    int del(int idx);
+    int insert(int idx, const std::string text);
+    Point home(int idx);
+    Point end(int idx);
+    Point left(int idx);
+    Point right(int idx);
+    Point up(int idx);
+    Point down(int idx);
 };
 
 struct Cell {
@@ -192,6 +213,7 @@ struct Cell {
     bool italic = false;
     bool underline = false;
 
+    void reset();
     inline bool operator==(const Cell& o) const {
         return size == o.size && bold == o.bold && italic == o.italic && underline == o.underline &&
             fg_color == o.fg_color && bg_color == o.bg_color && content == o.content;
@@ -226,6 +248,7 @@ struct DrawBuffer {
     void ScrollBar(const Point& pos, int length, int offset, int content_length, bool vertical, const Color& track_color = AnsiColor_White, const Color& thumb_color = AnsiColor_Bright_White);
     void SetColor(const Point& pos, const Color& fgColor, const Color& bgColor);
     void SetBgColor(const Point& pos, const Color& bgColor);
+    void FillBgColor(const Rect& r, const Color& bgColor);
 };
 
 std::string CursorMove(int x, int y);
@@ -253,19 +276,19 @@ struct Event
     EventType_ type = EventType_None;
     uint32_t key = 0;
     uint32_t vkey = 0;
-    // button: 1=left, 2=right, 3=middle, 4=scroll up, 5=scroll down, 6=h-scroll left, 7=h-scroll right
-    int button = 0;
+    int button = 0;             // button: 1=left, 2=right, 3=middle, 4=scroll up, 5=scroll down, 6=h-scroll left, 7=h-scroll right
     int x = 0;
     int y = 0;
-    // clicks: number of clicks (1=single, 2=double)
-    int clicks = 0;
+    int clicks = 0;             // clicks: number of clicks (1=single, 2=double)
     std::string paste_text;
+    bool first_down[3] = { false };
 
     bool shift = false;
     bool ctrl = false;
     bool alt = false;
 
-    bool any_click() const { return type == EventType_Mouse && button >= 1 && button <= 3; }
+    bool any_button_down() const { return type == EventType_Mouse && button >= 1 && button <= 3; }
+    bool any_first_down() const { return first_down[0] || first_down[1] || first_down[2]; }
 };
 
 class Terminal
@@ -382,6 +405,11 @@ struct Win
     virtual Win* GetNotify(const Point& pt);
     virtual Win* GetSlider(const Point& pt);
     virtual Win* GetUI(const std::string &name);
+
+    template<class T>
+    T* GetUI(const char *name) {
+        return dynamic_cast<T*>(GetUI(std::string(name)));
+    }
     virtual void AddChild(WinPtr obj);
     virtual void Click() { if (on_click) on_click(); }
     virtual bool IsSlider() const { return false; }
@@ -459,7 +487,7 @@ struct Slider : Win
     bool ParseCmd(const std::string& cmd, EditLine& el) override;
     void CalRect(Win* parent) override;
     void Paint(DrawBuffer& drawbuf) override;
-    bool IsSlider() const override { return true; }
+    bool IsSlider() const override { return (is_scroll_x || is_scroll_y); }
     void Event(const TUI::Event& ev) override;
     Point GetClipPos() const override;
     virtual void PaintScrollBar(DrawBuffer& drawbuf);
@@ -484,6 +512,10 @@ struct Edit : Slider, Text
     void Event(const TUI::Event& ev) override;
 
     Point cursor;
+    int drag_start = -1;  // character index where drag selection started
+    bool readonly = false;
+
+    std::function<bool(const TUI::Event &evt)> on_key;
 };
 
 struct Mgr : Win
@@ -495,7 +527,6 @@ struct Mgr : Win
     void Paint(DrawBuffer& drawbuf) override;
 
     bool is_dirty = true;
-    bool is_prev_down = false;
     Win* notify_ = nullptr;     //input focus
     Win* hover_ = nullptr;
     Win* hover_slider_ = nullptr;

@@ -81,6 +81,65 @@ Object Slider
         Text 📊 Diagnostics
         FgColor White
     }
+    Object Button
+    {
+        Name toolDeploy
+        Rect 0 14 23 15
+        Text 🚀 Deploy
+        FgColor BrightMagenta
+    }
+    Object Check
+    {
+        Name toolAutoSave
+        Rect 0 18 23 19
+        Text 💾 Auto-save
+        Checked true
+        FgColor Green
+    }
+    Object Check
+    {
+        Name toolDarkMode
+        Rect 0 22 23 23
+        Text 🌙 Dark mode
+        Checked false
+        FgColor BrightBlue
+    }
+    Object Label
+    {
+        Name toolSearch
+        Rect 0 26 23 27
+        Text 🔍 Search files
+        FgColor Yellow
+    }
+    Object Button
+    {
+        Name toolTerminal
+        Rect 0 30 23 31
+        Text 💻 Terminal
+        FgColor BrightWhite
+    }
+    Object Label
+    {
+        Name toolGit
+        Rect 0 34 23 35
+        Text 📦 Git status
+        FgColor Green
+    }
+    Object Check
+    {
+        Name toolNotifications
+        Rect 0 38 23 39
+        Text 🔔 Notifications
+        Checked true
+        FgColor BrightYellow
+    }
+    Object Label
+    {
+        Name toolSettings
+        Rect 0 42 23 43
+        Text ⚙️ Settings
+        FgColor White
+    }
 }
 
 # ── Chat / Output Area (Right) ─────────────
@@ -129,16 +188,26 @@ Object Slider
 }
 
 # ── Input Bar (Bottom) ─────────────────────
+Object Label
+{
+    Name prompt
+    Rect 0 0 1 0
+    Dock top|down 0 100 100 100
+    DockOffset 0 -4 0 -4
+    Text >
+}
 Object Edit
 {
     Name inputBar
-    Rect 0 0 100 5
+    Rect 1 0 100 5
     Dock top|right|down 0 100 100 100
     DockOffset 0 -4 0 0
-    Text > Type your message...
+    Text Type your message...\nThis is next line\nABC
     FgColor BrightYellow
 }
     )");
+
+    TUI::Slider* toolsPanel = mgr.GetUI<TUI::Slider>("toolsPanel");
 
     while (!quit) {
         if (mgr.Update(terminal)) {
