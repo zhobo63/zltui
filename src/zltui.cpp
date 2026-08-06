@@ -382,7 +382,7 @@ int Text::cur_idx_of(const Point& cursor) const
     for (size_t i = 0; i < position.size(); i++) {
         auto& pos = position[i];
         if (pos.y == cursor.y)
-            idx = i;
+            idx = (int)i;
         if (pos.x == cursor.x && pos.y == cursor.y)
             return static_cast<int>(i);
         if (pos.y > cursor.y)
@@ -872,6 +872,53 @@ void DrawBuffer::FillBgColor(const Rect& _r, const Color& bgColor)
         }
         yx += width_;
     }
+}
+
+/// <summary>
+/// Event
+/// </summary>
+
+
+void Event::set_key(uint32_t _key, uint32_t _vkey) { 
+    type = EventType_Key; 
+    key = _key; 
+    vkey = _vkey; 
+}
+bool Event::any_button_down() const { 
+    return type == EventType_Mouse && button >= 1 && button <= 3; 
+}
+bool Event::any_first_down() const { 
+    return first_down[0] || first_down[1] || first_down[2]; 
+}
+void Event::reset() { 
+    type = EventType_None;
+    key = 0;
+    vkey = 0;
+    button = 0;
+    x = 0;
+    y = 0;
+    clicks = 0;
+    first_down[0] = first_down[1] = first_down[2] = false;
+    shift = false;
+    ctrl = false;
+    alt = false;
+    is_vt = false;
+    is_paste_bracket = false;
+    seq.clear();
+    paste_text.clear();
+}
+
+void Event::parse_sequence(uint32_t ch)
+{
+    //TODO
+}
+void Event::parse_csi(uint32_t ch)
+{
+    //TODO
+}
+void Event::parse_sgr(uint32_t ch)
+{
+    //TODO
 }
 
 /// <summary>
@@ -2578,7 +2625,21 @@ void Slider::Event(const TUI::Event& ev)
 
     switch (ev.button) {
     case 4:
-        if (is_scroll_y) {
+        if (is_scroll_y && is_scroll_x) {
+            Point pt = { ev.x, ev.y };
+            Rect scrollbar = { clip.x, clip.y2 + 1, clip.x2, clip.y2 + 1 };
+            if (scrollbar.inside(pt)) {
+                if (scroll_value.x > 0) {
+                    scroll_value.x--;
+                }
+            }
+            else {
+                if (scroll_value.y > 0) {
+                    scroll_value.y--;
+                }
+            }
+        }
+        else if (is_scroll_y) {
             if (scroll_value.y > 0) {
                 scroll_value.y--;
             }
@@ -2590,7 +2651,21 @@ void Slider::Event(const TUI::Event& ev)
         }
         break;
     case 5:
-        if (is_scroll_y) {
+        if (is_scroll_y && is_scroll_x) {
+            Point pt = { ev.x, ev.y };
+            Rect scrollbar = { clip.x, clip.y2 + 1, clip.x2, clip.y2 + 1 };
+            if (scrollbar.inside(pt)) {
+                if (scroll_value.x < scroll_max.x) {
+                    scroll_value.x++;
+                }
+            }
+            else {
+                if (scroll_value.y < scroll_max.y) {
+                    scroll_value.y++;
+                }
+            }
+        }
+        else if (is_scroll_y) {
             if (scroll_value.y < scroll_max.y) {
                 scroll_value.y++;
             }
@@ -2836,7 +2911,7 @@ void Edit::Event(const TUI::Event& ev)
         }
         else if (ev.ctrl && (ev.key == 1)) {  // Ctrl A
             selected.start = 0;
-            selected.end = chars.size();
+            selected.end = (int)chars.size();
         }
         // Printable character — insert at cursor (replace selection first if active)
         else if (ev.key >= 32 && ev.key < 0x10FFFF && !readonly) {

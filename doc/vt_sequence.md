@@ -16,6 +16,7 @@
 - [X10 滑鼠報文](#x10-滑鼠報文)
 - [SGR 滑鼠報文](#sgr-滑鼠報文)
 - [完整序列速查表](#完整序列速查表)
+- [函式分工草圖](#函式分工草圖)
 
 ---
 
@@ -32,6 +33,86 @@ VT（Video Terminal）/ ANSI escape sequence 是終端機用來傳遞鍵盤、�
 | X10 Mouse | `EventType::Mouse` | 基本滑鼠報文（`\e[M...`）|
 | SGR Mouse | `EventType::Mouse` | 進階滑鼠報文，支援 Modifier（`\e[<...M/m`）|
 | Bracketed Paste | `EventType::Paste` | 括號貼上模式 |
+
+---
+
+## 函式分工草圖
+
+目前 `src/zltui.cpp` 內的 `parse_vt_sequence()` 同時處理「狀態累積」、「序列辨識」、「事件映射」與「錯誤回退」，可讀性與維護性都偏低。建議拆成一個入口加多個專責 helper，讓每個函式只做一件事。
+
+### 目標結構
+
+```mermaid
+flowchart TD
+    A["Terminal::event_thread()"] --> B["parse_vt_sequence()"]
+    B --> C["feed / accumulate"]
+    C --> D{"state"}
+    D -->|"Normal"| E["parse_plain_key()"]
+    D -->|"CSI"| F["parse_csi()"]
+    D -->|"SS3"| G["parse_ss3()"]
+    D -->|"SGR Mouse"| H["parse_sgr()"]
+    D -->|"Bracketed Paste"| I["parse_paste()"]
+    F --> J["map key / modifier"]
+    G --> J
+    H --> K["emit mouse event"]
+    I --> L["emit paste event"]
+```
+
+### 對應到 `src/zltui.cpp`
+
+| 現有區塊 | 建議拆分後職責 | 建議函式 |
+|---|---|---|
+| `Terminal::event_thread()` | 讀取 `INPUT_RECORD`，把原始輸入交給 parser | `event_thread()` |
+| `parse_vt_sequence()` 開頭的輸入判斷 | 決定要不要把當前輸入視為 VT 輸入 | `feed_vt_input()` |
+| `ev.is_paste_bracket` 分支 | 收集 bracketed paste 內容與結束序列 | `parse_paste()` |
+| `\e[` 與 CSI 相關分支 | 處理方向鍵、Home/End、PageUp/PageDown、Delete、Insert、F-key | `parse_csi()` |
+| `\eO` 分支 | 處理 SS3 序列（F1–F4） | `parse_ss3()` |
+| `\e[<...M/m` 分支 | 處理 SGR 滑鼠事件 | `parse_sgr()` |
+| `parse_csi_modifier()` | 從 CSI 參數解出 Shift / Alt / Ctrl | 保留為獨立 helper |
+| `ev.seq.size() > 16` 回退邏輯 | 異常序列清理與 debug logging | `reset_invalid_sequence()` |
+
+### 建議拆法
+
+1. `bool parse_vt_sequence(INPUT_RECORD& rec, Event& ev)`
+   - 只做入口與分派。
+   - 讀到字元後，先判定目前是否在 VT 狀態。
+   - 決定交給 `parse_csi()`、`parse_ss3()`、`parse_sgr()` 或 `parse_paste()`。
+
+2. `bool parse_csi(Event& ev, uint32_t ch)`
+   - 只處理 `ESC [` 後面的 CSI 序列。
+   - 解析方向鍵、Home/End、PageUp/PageDown、Delete、Insert、F1–F12。
+   - 若有 modifier，統一呼叫 `parse_csi_modifier()`。
+
+3. `bool parse_ss3(Event& ev, uint32_t ch)`
+   - 只處理 `ESC O`。
+   - 目前主要對應 F1–F4。
+
+4. `bool parse_sgr(Event& ev, uint32_t ch)`
+   - 只處理 `ESC [ < b ; x ; y M/m`。
+   - 負責滑鼠按下、放開、滾輪、modifier。
+
+5. `bool parse_paste(Event& ev, uint32_t ch)`
+   - 只處理 bracketed paste 緩衝。
+   - 偵測 `\e[200~` 與 `\e[201~`。
+   - 產生 `EventType_Paste`。
+
+6. `void emit_key_event(...)` / `void emit_mouse_event(...)`
+   - 只負責把解析結果轉成 `Event`，不要再做字串判斷。
+   - 可讓 `event_thread()` 的 push 邏輯更單純。
+
+### 這樣拆的好處
+
+- 每個函式的輸入和輸出都更單純。
+- `parse_vt_sequence()` 不會再變成巨型 `switch`。
+- 新增序列時只需要在對應 parser 裡加邏輯。
+- 測試可以按功能切小，避免整個 parser 一次驗證。
+
+### 實作順序建議
+
+1. 先抽出 `parse_paste()`，因為它和一般 CSI / SS3 邏輯最不一樣。
+2. 再抽出 `parse_csi()` 與 `parse_ss3()`。
+3. 最後把 SGR mouse 與 modifier 解析從主函式移出去。
+4. 等結構穩定後，再整理 `Event` 狀態欄位，避免過多暫存旗標混在一起。
 
 ---
 

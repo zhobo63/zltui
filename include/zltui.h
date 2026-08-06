@@ -5,6 +5,7 @@
 #define NOMINMAX
 #endif
 #define WIN32_LEAN_AND_MEAN
+#define _CRT_SECURE_NO_WARNINGS
 #include <windows.h>
 #else
 #include <termios.h>
@@ -297,10 +298,13 @@ struct Event
     std::string paste_text;
     std::string seq;
 
-    void set_key(uint32_t _key, uint32_t _vkey) { type = EventType_Key; key = _key; vkey = _vkey; }
-    bool any_button_down() const { return type == EventType_Mouse && button >= 1 && button <= 3; }
-    bool any_first_down() const { return first_down[0] || first_down[1] || first_down[2]; }
-    void reset() { type = EventType_None; seq.clear(); paste_text.clear(); key = 0; vkey = 0; is_vt = false; is_paste_bracket = false; }
+    void set_key(uint32_t _key, uint32_t _vkey);
+    bool any_button_down() const;
+    bool any_first_down() const;
+    void reset();
+    void parse_sequence(uint32_t ch);
+    void parse_csi(uint32_t ch);
+    void parse_sgr(uint32_t ch);
 };
 
 class Terminal
