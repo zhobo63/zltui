@@ -475,7 +475,7 @@ struct Win
 
 struct Label : Win, Text
 {
-    Label(Mgr* mgr) :Win(mgr) {}
+    Label(Mgr* mgr);
 
     bool ParseCmd(const std::string& cmd, EditLine& el) override;
     void Paint(DrawBuffer& drawbuf) override;
@@ -514,7 +514,7 @@ struct Check : Button
 
 struct Slider : Win
 {
-    Slider(Mgr* mgr) :Win(mgr) {}
+    Slider(Mgr* mgr);
 
     bool ParseCmd(const std::string& cmd, EditLine& el) override;
     void CalRect(Win* parent) override;

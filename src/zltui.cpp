@@ -1227,6 +1227,29 @@ static bool parse_sgr_mouse(Event &ev)
     return true;
 }
 
+// Parse modifier from a CSI sequence parameter.
+// Windows VT Input encodes modifiers as the second semicolon-separated value:
+//   1=none, 2=Shift, 3=Alt, 4=Shift+Alt, 5=Ctrl, 6=Ctrl+Shift,
+//   7=Ctrl+Alt, 8=Ctrl+Shift+Alt
+static void parse_csi_modifier(Event &ev, const std::string& seq)
+{
+    // Find the first semicolon after "ESC["
+    size_t semi = seq.find(';', 2);
+    if (semi == std::string::npos) return;
+
+    // Read the modifier number up to the next non-digit
+    int mod = 0;
+    size_t p = semi + 1;
+    while (p < seq.size() && seq[p] >= '0' && seq[p] <= '9')
+        mod = mod * 10 + (seq[p++] - '0');
+
+    if (mod >= 2) {
+        ev.shift = ((mod & 2) != 0);
+        ev.alt   = ((mod & 4) != 0);
+        ev.ctrl  = ((mod & 8) != 0);
+    }
+}
+
 bool parse_vt_sequence(INPUT_RECORD &rec, Event &ev){
     auto& key = rec.Event.KeyEvent;
     uint16_t ch = key.uChar.UnicodeChar;
@@ -1262,7 +1285,7 @@ bool parse_vt_sequence(INPUT_RECORD &rec, Event &ev){
     ev.key = ch;
     ev.seq += byte;
 
-    // If we just received ESC, wait for more characters — don't parse yet.
+    // If we just received ESC, wait for more characters.
     if (byte == '\x1b') {
         ev.is_vt = true;
         return true;  // consumed, but incomplete
@@ -1311,6 +1334,7 @@ bool parse_vt_sequence(INPUT_RECORD &rec, Event &ev){
             case 'F': ev.set_key(0, VK_END);   break;
             default: break;
         }
+        parse_csi_modifier(ev, ev.seq);
     }
     else if (len >= 3 && ev.seq[0] == '\x1b' && ev.seq[1] == 'O') {
         // SS3 — F1–F4
@@ -1322,6 +1346,7 @@ bool parse_vt_sequence(INPUT_RECORD &rec, Event &ev){
             case 'S': ev.set_key(0, VK_F4);  break;
             default:  break;
         }
+        parse_csi_modifier(ev, ev.seq);
     }
 
     if (len >= 4 && ev.seq[0] == '\x1b' && ev.seq[1] == '[' && ev.seq.back() == '~') {
@@ -1350,6 +1375,7 @@ bool parse_vt_sequence(INPUT_RECORD &rec, Event &ev){
             case 24: ev.set_key(0, VK_F12);     break;
             default: break;
         }
+        parse_csi_modifier(ev, ev.seq);
     }
 
     // Buffer is growing but not yet a recognized sequence.
@@ -1381,15 +1407,20 @@ void Terminal::event_thread()
                 ev.type = EventType_Key;
                 ev.vkey = rec.Event.KeyEvent.wVirtualKeyCode;
                 ev.key = map_key_event(rec.Event.KeyEvent);
-                ev.shift = (rec.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) != 0;
-                ev.ctrl = (rec.Event.KeyEvent.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
-                ev.alt = (rec.Event.KeyEvent.dwControlKeyState & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
-                switch (ev.key) {
-                case 13: ev.vkey = VK_RETURN; break;
-                case 127: ev.vkey = VK_BACK; break;
+                auto& cks = rec.Event.KeyEvent.dwControlKeyState;
+                ev.shift = (cks & SHIFT_PRESSED) != 0;
+                ev.ctrl = (cks & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
+                ev.alt = (cks & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
+                if (ev.key == 13) {
+                    ev.vkey = VK_RETURN;
+                }
+                else if (ev.key == 127) {
+                    ev.vkey = VK_BACK;
+                }
+                else if (ev.key >= 1 && ev.key <= 26) {
+                    ev.ctrl = true; // Ctrl+A..Z (except Enter)
                 }
             }
-
             // Push the event if it carries meaningful data.
             if (ev.type == EventType_Mouse) {
                 ev.first_down[0] = ev.button == 1 && (prev_btn_state & FROM_LEFT_1ST_BUTTON_PRESSED) == 0;
@@ -1402,8 +1433,6 @@ void Terminal::event_thread()
                 std::lock_guard<std::mutex> lock(s_event_mutex);
                 s_events.push_back(ev);
                 ev.reset();
-
-
             }
             else if (ev.type == EventType_Paste) {
                 std::lock_guard<std::mutex> lock(s_event_mutex);
@@ -2215,6 +2244,10 @@ Win* Win::Clone() const
 /// Label
 /// </summary>
 
+Label::Label(Mgr* mgr) :Win(mgr) {
+    is_notifiable = false;
+}
+
 bool Label::ParseCmd(const std::string& cmd, EditLine& el)
 {
     bool ret = true;
@@ -2311,6 +2344,14 @@ Win* Label::Clone() const
 /// Button
 /// </summary>
 
+Button::Button(Mgr* mgr) :Label(mgr) {
+    text_algn = Align_Center;
+    border_style = BorderStyle_None;
+    draw_border = true;
+    bg_color = COLOR_BTN;
+    is_notifiable = true;
+}
+
 bool Button::ParseCmd(const std::string& cmd, EditLine& el)
 {
     bool ret = true;
@@ -2326,13 +2367,6 @@ bool Button::ParseCmd(const std::string& cmd, EditLine& el)
         ret = false;
     }
     return ret;
-}
-
-Button::Button(Mgr* mgr) :Label(mgr) {
-    text_algn = Align_Center;
-    border_style = BorderStyle_None;
-    draw_border = true;
-    bg_color = COLOR_BTN;
 }
 
 void Button::PaintBorder(DrawBuffer& drawbuf)
@@ -2417,6 +2451,11 @@ Win* Check::Clone() const
 /// <summary>
 /// Slider
 /// </summary>
+
+Slider::Slider(Mgr* mgr) :Win(mgr)
+{
+    is_notifiable = true;
+}
 
 bool Slider::ParseCmd(const std::string& cmd, EditLine& el)
 {
@@ -2595,6 +2634,7 @@ Win* Slider::Clone() const
 
 Edit::Edit(Mgr* mgr) :Slider(mgr) {
     color_selected = COLOR_SELECTED;
+    is_notifiable = true;
 }
 
 bool Edit::ParseCmd(const std::string& cmd, EditLine& el)
@@ -2766,12 +2806,16 @@ void Edit::Event(const TUI::Event& ev)
                 else                          cursor = end(cur_idx);
             }
         }
-        else if (ev.ctrl && ev.key == 3) {  // Ctrl C
+        else if (ev.ctrl && (ev.key == 3)) {  // Ctrl C
             // Copy selection to clipboard
             std::string sel = get_selected();
             if (!sel.empty()) {
                 CopyClipboard(sel);
             }
+        }
+        else if (ev.ctrl && (ev.key == 1)) {  // Ctrl A
+            selected.start = 0;
+            selected.end = chars.size();
         }
         // Printable character — insert at cursor (replace selection first if active)
         else if (ev.key >= 32 && ev.key < 0x10FFFF && !readonly) {

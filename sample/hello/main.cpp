@@ -199,7 +199,7 @@ Object Edit
             }
             inputBar->setText("");
             chatArea->AddChild(TUI::WinPtr(lb));
-            chatArea->scroll_value.y = std::max(0, lb->local.y2 - chatArea->local.height());
+            chatArea->scroll_value.y = std::max(0, lb->local.y2 + 1 - chatArea->clip.height());
             mgr.is_dirty = true;
             return true;
         }
