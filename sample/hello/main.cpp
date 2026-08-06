@@ -130,14 +130,14 @@ Object Edit
         filesPanel->scroll_value.y = 0;
         filesPanel->mgr->notify_ = nullptr;
 
-        int file_y = 1;
+        int file_y = 0;
 
         // Add ".." button if not at root
         if (current_path.has_parent_path()) {
 
             TUI::Button* btn = new TUI::Button(&mgr);
             btn->name = "..";
-            btn->local = { 1, file_y, filesPanel->clip.width() - 2, file_y };
+            btn->local = { 1, file_y, filesPanel->local.width() - 2, file_y };
             btn->setText(u8"📁 ..");
             btn->dock_.mode = TUI::Dock_Right;
             btn->dock_.dock = { 0, 0, 100, 100 };
@@ -148,7 +148,7 @@ Object Edit
                 populate_files_panel();
             };
             filesPanel->AddChild(TUI::WinPtr(btn));
-            file_y += 1;
+            file_y ++;
         }
 
         for (const auto& entry : std::filesystem::directory_iterator(current_path)) {
@@ -159,7 +159,7 @@ Object Edit
 
             TUI::Button* btn = new TUI::Button(&mgr);
             btn->name = filename;
-            btn->local = { 1, file_y, filesPanel->clip.width() - 2, file_y };
+            btn->local = { 1, file_y, filesPanel->local.width() - 2, file_y };
             btn->setText(icon + " " + filename);
             btn->dock_.mode = TUI::Dock_Right;
             btn->dock_.dock = { 0, 0, 100, 100 };
@@ -176,24 +176,31 @@ Object Edit
                 }
             };
             filesPanel->AddChild(TUI::WinPtr(btn));
-            file_y += 1;
+            file_y++;
         }
+        mgr.is_dirty = true;
     };
 
     populate_files_panel();
 
-    inputBar->on_key = [inputBar, chatArea, &mgr](const TUI::Event &ev) -> bool {
+    inputBar->on_key = [inputBar, chatArea, &mgr, &quit](const TUI::Event &ev) -> bool {
         if (!ev.ctrl && !ev.shift && ev.vkey == VK_RETURN) {
             TUI::Label* lb = new TUI::Label(&mgr);
             int last_y = 0;
-            for (auto ch : chatArea->child) {
+            if(chatArea->child.size()>0) {
+                auto ch = chatArea->child.back();
                 last_y = std::max(last_y, ch->local.y2 + 1);
             }
-            lb->local = { 0,last_y,chatArea->clip.width() - 1, last_y + 5 };
+            lb->local = { 0,last_y,chatArea->local.width() - 1, last_y + 5 };
+            lb->autosize_ = TUI::Autosize_TextHeight;
             lb->setText(inputBar->text);
+            if (inputBar->text == "/q") {
+                quit = true;
+            }
             inputBar->setText("");
             chatArea->AddChild(TUI::WinPtr(lb));
-            chatArea->scroll_value.y = last_y + 5 - chatArea->clip.height();
+            chatArea->scroll_value.y = std::max(0, lb->local.y2 - chatArea->local.height());
+            mgr.is_dirty = true;
             return true;
         }
         return false;

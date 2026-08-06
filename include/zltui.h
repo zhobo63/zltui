@@ -1,6 +1,10 @@
 ﻿#pragma once
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
 #include <termios.h>
@@ -288,13 +292,15 @@ struct Event
     bool ctrl = false;
     bool alt = false;
     bool is_vt = false;
+    bool is_paste_bracket = false;
 
     std::string paste_text;
     std::string seq;
 
+    void set_key(uint32_t _key, uint32_t _vkey) { type = EventType_Key; key = _key; vkey = _vkey; }
     bool any_button_down() const { return type == EventType_Mouse && button >= 1 && button <= 3; }
     bool any_first_down() const { return first_down[0] || first_down[1] || first_down[2]; }
-    void reset() { type = EventType_None; seq.clear(); paste_text.clear(); key = 0; vkey = 0; is_vt = false; }
+    void reset() { type = EventType_None; seq.clear(); paste_text.clear(); key = 0; vkey = 0; is_vt = false; is_paste_bracket = false; }
 };
 
 class Terminal
@@ -421,6 +427,8 @@ struct Win
     virtual Win* GetNotify(const Point& pt);
     virtual Win* GetSlider(const Point& pt);
     virtual Win* GetUI(const std::string &name);
+    virtual void Copy(const Win* ob);
+    virtual Win* Clone() const;
 
     template<class T>
     T* GetUI(const char *name) {
@@ -431,6 +439,7 @@ struct Win
     virtual bool IsSlider() const { return false; }
     virtual void Event(const Event& ev) {}
     virtual Point GetClipPos() const;
+    virtual Point GetTextSize() const { return { 0,0 }; }
 
     std::string name = "";
     std::string title = "";
@@ -471,8 +480,10 @@ struct Label : Win, Text
     bool ParseCmd(const std::string& cmd, EditLine& el) override;
     void Paint(DrawBuffer& drawbuf) override;
     virtual void PaintText(DrawBuffer& drawbuf);
-
+    Point GetTextSize() const override;
     void setText(const std::string& _text);
+    void Copy(const Win* ob) override;
+    Win* Clone() const override;
 
     Align_ text_algn = Align_Start;
 };
@@ -482,6 +493,8 @@ struct Button : Label
     Button(Mgr* mgr);
     bool ParseCmd(const std::string& cmd, EditLine& el) override;
     void PaintBorder(DrawBuffer& drawbuf) override;
+    void Copy(const Win* ob) override;
+    Win* Clone() const override;
 
     Color bg_color_hover = COLOR_HOVER;
     Color bg_color_down = COLOR_DOWN;
@@ -492,6 +505,8 @@ struct Check : Button
     Check(Mgr* mgr);
     void PaintText(DrawBuffer& drawbuf) override;
     void Click() override;
+    void Copy(const Win* ob) override;
+    Win* Clone() const override;
 
     bool checked = false;
     std::function<void(bool)> on_check;
@@ -508,6 +523,8 @@ struct Slider : Win
     void Event(const TUI::Event& ev) override;
     Point GetClipPos() const override;
     virtual void PaintScrollBar(DrawBuffer& drawbuf);
+    void Copy(const Win* ob) override;
+    Win* Clone() const override;
 
     bool is_scroll_x = false;
     bool is_scroll_y = true;
@@ -527,6 +544,8 @@ struct Edit : Slider, Text
     void PaintText(DrawBuffer& drawbuf);
     void setText(const std::string& _text);
     void Event(const TUI::Event& ev) override;
+    void Copy(const Win* ob) override;
+    Win* Clone() const override;
 
     Point cursor;
     int drag_start = -1;  // character index where drag selection started
