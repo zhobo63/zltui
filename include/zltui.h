@@ -540,6 +540,7 @@ struct Edit : Slider, Text
     Edit(Mgr* mgr);
 
     bool ParseCmd(const std::string& cmd, EditLine& el) override;
+    void CalRect(Win* parent) override;
     void Paint(DrawBuffer& drawbuf) override;
     void PaintText(DrawBuffer& drawbuf);
     void setText(const std::string& _text);

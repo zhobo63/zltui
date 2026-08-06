@@ -559,7 +559,12 @@ BorderStyle_ ParseBorderStyle(const std::string& param)
 
 void DrawBuffer::PushClip(const Rect& clip)
 {
-    clips_.push_back(clip);
+    if (clips_.size() > 0) {
+        clips_.push_back(clips_.back().intersect(clip));
+    }
+    else {
+        clips_.push_back(clip);
+    }
 }
 void DrawBuffer::PopClip()
 {
@@ -923,7 +928,10 @@ void Terminal::Render()
 
             //if (cur_cell == pre_cell)
             //    continue;
-            if (cur_x != x || cur_y != y) {
+            //if (cur_x != x || cur_y != y) {
+            //    out += CursorMove(x, y);
+            //}
+            if (cur_y != y) {
                 out += CursorMove(x, y);
             }
 
@@ -1041,25 +1049,6 @@ void Terminal::EnableRawMode()
         vtSupported_ = false;
     }
     SetConsoleMode(hIn, dwMode);
-
-    // Handle Ctrl+C cleanup
-    //SetConsoleCtrlHandler(
-    //    [](DWORD fdwCtrlType) -> BOOL {
-    //        switch (fdwCtrlType) {
-    //            case CTRL_C_EVENT:
-    //            case CTRL_CLOSE_EVENT:
-    //            {
-    //                HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-    //                std::cout << SHOW_CURSOR;
-    //                std::cout << "\033[?1049l";  // Disable alternate buffer
-    //            }
-    //                return FALSE;  // Let default handler call ExitProcess
-    //            default:
-    //                return FALSE;
-    //        }
-    //    },
-    //    TRUE);
-
     originalInCP_ = GetConsoleCP();
     SetConsoleCP(CP_UTF8);
     SetConsoleOutputCP(CP_UTF8);
@@ -1411,8 +1400,25 @@ void Terminal::event_thread()
                 ev.shift = (cks & SHIFT_PRESSED) != 0;
                 ev.ctrl = (cks & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
                 ev.alt = (cks & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
-                if (ev.key == 13) {
+                if (ev.key == 0) {
+                    ev.ctrl = true;
+                    ev.key = ' ';
+                }
+                else if (ev.key == 8) {
+                    ev.ctrl = true;
+                    ev.vkey = VK_BACK;
+                }
+                else if (ev.key == 9) { //Tab
+                }
+                else if (ev.key == 10) {
                     ev.vkey = VK_RETURN;
+                    ev.ctrl = true;
+                }
+                else if (ev.key == 13) {
+                    ev.vkey = VK_RETURN;
+                }
+                else if (ev.key == 27) {
+                    ev.vkey = VK_ESCAPE;
                 }
                 else if (ev.key == 127) {
                     ev.vkey = VK_BACK;
@@ -1508,17 +1514,14 @@ void Terminal::EnableRawMode()
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 
     std::cout << "\033[?1003h\033[?1006h\033[?2004h";  // Enable mouse reporting (all
-                                                       // motion) + SGR + Bracketed
-                                                       // Paste
+                                                       // motion) + SGR + Bracketed Paste
 }
 
 void Terminal::DisableRawMode()
 {
     std::cout << SHOW_CURSOR;          // Show cursor
     std::cout << "\033[?1049l";  // Disable alternate screen buffer
-
-    std::cout << "\033[?1003l\033[?1006l\033[?2004l";  // Disable mouse and bracketed
-                                                       // paste
+    std::cout << "\033[?1003l\033[?1006l\033[?2004l";  // Disable mouse and bracketed paste
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &originalTermios_);
 }
 
@@ -2486,23 +2489,25 @@ void Slider::CalRect(Win* parent)
     content_length = { 0,0 };
     if (is_scroll_y) {
         clip.x2--;
-        for (auto ch : child) {
+        if (child.size() > 0) {
+            auto ch = child.back();
             content_length.y = std::max(content_length.y, ch->local.y2 + 1);
         }
         if (content_length.y < clip.height()) {
             content_length.y = clip.height();
         }
-        scroll_max.y = content_length.y - clip.height();
+        scroll_max.y = std::max(0, content_length.y - clip.height());
     }
     if (is_scroll_x) {
         clip.y2--;
-        for (auto ch : child) {
+        if (child.size() > 0) {
+            auto ch = child.back();
             content_length.x = std::max(content_length.x, ch->local.x2 + 1);
         }
         if (content_length.x < clip.width()) {
             content_length.x = clip.width();
         }
-        scroll_max.x = content_length.x - clip.width();
+        scroll_max.x = std::max(0, content_length.x - clip.width());
     }
 }
 
@@ -2650,26 +2655,41 @@ bool Edit::ParseCmd(const std::string& cmd, EditLine& el)
     }
     return ret;
 }
+void Edit::CalRect(Win* parent)
+{
+    Slider::CalRect(parent);
+    if (is_scroll_y) {
+        content_length.y = std::max(content_length.y, text_height + 1);
+        scroll_max.y = std::max(0, content_length.y - clip.height());
+    }
+    if (is_scroll_x) {
+        content_length.x = std::max(content_length.x, text_width + 1);
+        scroll_max.x = std::max(0, content_length.x - clip.width());
+    }
+}
 
 void Edit::Paint(DrawBuffer& drawbuf)
 {
     PaintBorder(drawbuf);
     PaintText(drawbuf);
+    PaintScrollBar(drawbuf);
     PaintChild(drawbuf);
 }
 
 void Edit::PaintText(DrawBuffer& drawbuf)
 {
+    drawbuf.PushClip(clip);
     if (!text.empty()) {
-        int tx = clip.x;
-        int ty = clip.y;
+        int tx = clip.x - scroll_value.x;
+        int ty = clip.y - scroll_value.y;
         drawbuf.Text({ tx, ty }, *this, fg_color);
     }
     if (mgr->notify_ == this) {
-        int cx = clip.x + cursor.x;
-        int cy = clip.y + cursor.y;
+        int cx = clip.x + cursor.x - scroll_value.x;
+        int cy = clip.y + cursor.y - scroll_value.y;
         drawbuf.SetBgColor({ cx,cy }, Color(200, 200, 200));
     }
+    drawbuf.PopClip();
 }
 
 void Edit::setText(const std::string& _text)
@@ -2682,6 +2702,7 @@ void Edit::setText(const std::string& _text)
 
 void Edit::Event(const TUI::Event& ev)
 {
+    Slider::Event(ev);
     if (mgr->notify_ != this)
         return;
 
@@ -2698,8 +2719,8 @@ void Edit::Event(const TUI::Event& ev)
             return;
         }
 
-        int lx = ev.x - clip.x;
-        int ly = ev.y - clip.y;
+        int lx = ev.x - clip.x + scroll_value.x;
+        int ly = ev.y - clip.y + scroll_value.y;
         int idx = char_at(lx, ly);
 
         if (idx < 0) {

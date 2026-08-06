@@ -12,11 +12,6 @@
 - **影响**: 在 Linux/macOS 上 TUI 完全不可交互。
 - **建议**: 使用 `read(STDIN_FILENO)` + ANSI escape sequence 解析（鼠标 SGR 模式、Bracketed Paste），或使用 `libuv` / `poll`。
 
-### 4. Ctrl+C / 异常退出清理不完整
-- **位置**: `Terminal::EnableRawMode()` (Windows)
-- **问题**: `SetConsoleCtrlHandler` 被注释掉，程序异常退出时终端可能残留原始模式。
-- **建议**: 启用控制台信号处理或使用 RAII 确保 `DisableRawMode()` 在退出时被调用。
-
 ---
 
 ## 🟢 低优先级（改进与增强）

@@ -35,7 +35,7 @@ int main()
 Object Label
 {
     Name titleBar
-    Rect 0 0 80 1
+    Rect 0 0 80 0
     Dock right 0 0 100 100
     Text 🤖 AI Agent — qwen3.6 | ████████░░ 82%
     Bold true
@@ -46,7 +46,7 @@ Object Label
 Object Slider
 {
     Name filesPanel
-    Rect 0 2 30 30
+    Rect 0 1 30 30
     DrawBorder true
     BorderStyle Single
     Title Files
@@ -60,7 +60,7 @@ Object Slider
 Object Slider
 {
     Name chatArea
-    Rect 31 2 100 100
+    Rect 31 1 100 100
     DrawBorder true
     BorderStyle Single
     Title Output
@@ -113,6 +113,7 @@ Object Edit
     Rect 1 0 100 5
     Dock top|right|down 0 100 100 100
     DockOffset 0 -4 0 0
+    ScrollY true
     Text Type your message...\nThis is next line\nABC
     FgColor BrightYellow
 }
@@ -205,6 +206,7 @@ Object Edit
         }
         return false;
         };
+    mgr.notify_ = inputBar;
 
     while (!quit) {
         if (mgr.Update(terminal)) {
