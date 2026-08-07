@@ -59,6 +59,7 @@ Object Slider
     DockOffset 0 0 0 -5
     FgColor BrightCyan
     Arrange Content true
+    ScrollX true
 }
 
 # ── Chat / Output Area (Right) ─────────────

@@ -15,7 +15,7 @@
 #if USE_REMOTE_LOG
 #define REMOTE_LOG_IMPLEMENT
 #include <remote_log.h>
-#else 
+#else
 #define LOG
 #endif
 
@@ -118,8 +118,7 @@ static int utf8_width(const std::string& text) {
         uint32_t cp = 0;
         int n = utf8_mbtowc(cp, p, static_cast<int>(len));
         if (n <= 0) break;
-        auto ch = Char::from_code(cp);
-        text_width += ch.char_width;
+        text_width += utf8_char_width(cp);
         p += n; len -= n;
     }
     return text_width;
@@ -260,7 +259,7 @@ Color Color::Parse(const std::string& param)
     return Color();
 }
 
-Char Char::from_code(uint32_t cp)
+Text::Char Text::Char::from_code(uint32_t cp)
 {
     Char c;
     c.ch = cp;
@@ -423,7 +422,7 @@ void Text::select_word(int x, int y)
 void Text::reparse()
 {
     Selection sel = selected;
-    Text::setText(text, wrap_width);
+    setText(text, wrap_width);
     selected = sel;
 }
 
@@ -480,9 +479,17 @@ int Text::del(int idx)
     }
     return idx;
 }
-int Text::insert(int idx, const std::string text)
+int Text::insert(int idx, const std::string value)
 {
-    return idx;
+    idx = std::max(0, std::min(idx, static_cast<int>(chars.size())));
+
+    Text parsed;
+    parsed.setText(value, 0);
+
+    size_t off = byte_offset_of(idx);
+    text.insert(off, value);
+    reparse();
+    return idx + static_cast<int>(parsed.chars.size());
 }
 Point Text::left(int idx)
 {
@@ -541,6 +548,157 @@ Point Text::end(int idx)
     pos = pos_of(idx);
     return { pos.x , pos.y };
 }
+
+/// <summary>
+/// RichText
+/// </summary>
+
+namespace {
+
+static RichText::Style default_rich_style()
+{
+    return RichText::Style{};
+}
+
+}
+
+void RichText::setStyle(int start, int end, const Color& fgColor,
+    const Color& bgColor, bool bold, bool italic, bool underline)
+{
+    Style value;
+    value.fg_color = fgColor;
+    value.bg_color = bgColor;
+    value.bold = bold;
+    value.italic = italic;
+    value.underline = underline;
+    setStyle(start, end, value);
+}
+
+void RichText::setStyle(int start, int end, const Style& value)
+{
+    start = std::max(start, 0);
+    end = std::min(end, static_cast<int>(styles.size()));
+    if (start >= end)
+        return;
+
+    for (int i = start; i < end; ++i)
+        styles[i] = value;
+}
+
+void RichText::setText(const std::string& _text, int wrap)
+{
+    // setText replaces the document, so all characters start with the
+    // default style. Editing methods preserve styles separately below.
+    Text::setText(_text, wrap);
+    styles.assign(chars.size(), default_rich_style());
+}
+
+void RichText::appendText(const std::string& _text, const Style& value)
+{
+    const size_t old_count = chars.size();
+    if (styles.size() != old_count)
+        styles.resize(old_count, default_rich_style());
+
+    text += _text;
+    Text::setText(text, wrap_width);
+
+    styles.resize(chars.size(), default_rich_style());
+    for (size_t i = old_count; i < styles.size(); ++i)
+        styles[i] = value;
+}
+
+int RichText::delete_selected(int idx)
+{
+    if (!selected.has_selection())
+        return idx;
+
+    int start = std::min(selected.start, selected.end);
+    int end = std::max(selected.start, selected.end);
+    start = std::max(start, 0);
+    end = std::min(end, static_cast<int>(chars.size()));
+
+    if (start < end) {
+        size_t byte_start = byte_offset_of(start);
+        size_t byte_end = byte_offset_of(end);
+        text.erase(byte_start, byte_end - byte_start);
+        styles.erase(styles.begin() + start, styles.begin() + end);
+        Text::setText(text, wrap_width);
+        styles.resize(chars.size(), default_rich_style());
+    }
+
+    return start;
+}
+
+int RichText::enter(int idx)
+{
+    if (selected.has_selection()) {
+        idx = delete_selected(idx);
+        selected.unselect();
+    }
+
+    idx = std::max(0, std::min(idx, static_cast<int>(chars.size())));
+    size_t byte_offset = byte_offset_of(idx);
+    text.insert(byte_offset, 1, '\n');
+    styles.insert(styles.begin() + idx, default_rich_style());
+    Text::setText(text, wrap_width);
+    styles.resize(chars.size(), default_rich_style());
+    return idx;
+}
+
+int RichText::backspace(int idx)
+{
+    if (selected.has_selection()) {
+        idx = delete_selected(idx);
+        selected.unselect();
+    }
+    else if (idx > 0 && idx <= static_cast<int>(chars.size())) {
+        int remove_at = idx - 1;
+        size_t byte_offset = byte_offset_of(remove_at);
+        text.erase(byte_offset, chars[remove_at].size);
+        styles.erase(styles.begin() + remove_at);
+        Text::setText(text, wrap_width);
+        styles.resize(chars.size(), default_rich_style());
+        --idx;
+    }
+    return idx;
+}
+
+int RichText::del(int idx)
+{
+    if (selected.has_selection()) {
+        idx = delete_selected(idx);
+        selected.unselect();
+    }
+    else if (idx >= 0 && idx < static_cast<int>(chars.size())) {
+        size_t byte_offset = byte_offset_of(idx);
+        text.erase(byte_offset, chars[idx].size);
+        styles.erase(styles.begin() + idx);
+        Text::setText(text, wrap_width);
+        styles.resize(chars.size(), default_rich_style());
+    }
+    return idx;
+}
+
+int RichText::insert(int idx, const std::string value)
+{
+    if (selected.has_selection()) {
+        idx = delete_selected(idx);
+        selected.unselect();
+    }
+
+    idx = std::max(0, std::min(idx, static_cast<int>(chars.size())));
+
+    Text parsed;
+    parsed.setText(value, 0);
+    size_t byte_offset = byte_offset_of(idx);
+    text.insert(byte_offset, value);
+    styles.insert(styles.begin() + idx, parsed.chars.size(), default_rich_style());
+
+    Text::setText(text, wrap_width);
+    styles.resize(chars.size(), default_rich_style());
+    return idx + static_cast<int>(parsed.chars.size());
+}
+
 
 /// <summary>
 /// Cell
@@ -683,6 +841,56 @@ void DrawBuffer::Text(const Point& pos, const TUI::Text& text, const Color& colo
     }
 }
 
+void DrawBuffer::Text(const Point& pos, const TUI::RichText& text)
+{
+    Rect clip = { 0, 0, width_ - 1, height_ - 1 };
+    if (!clips_.empty())
+        clip = clip.intersect(clips_.back());
+
+    for (size_t i = 0; i < text.chars.size(); ++i) {
+        const auto& ch = text.chars[i];
+        if (ch.ch == '\\n')
+            continue;
+
+        const auto& pt = text.position[i];
+        const auto& style = i < text.styles.size()
+            ? text.styles[i]
+            : RichText::Style{};
+        int cur_x = pos.x + pt.x;
+        int cur_y = pos.y + pt.y;
+
+        if (cur_y > clip.y2)
+            break;
+        if (!clip.inside(Point{ cur_x, cur_y }) ||
+            cur_x + ch.char_width - 1 > clip.x2)
+            continue;
+
+        auto& cell = cells_[cur_y * width_ + cur_x];
+        bool is_selected = text.selected.is_selected(static_cast<int>(i));
+
+        cell.fg_color = style.fg_color;
+        cell.size = ch.char_width;
+        cell.bold = style.bold;
+        cell.italic = style.italic;
+        cell.underline = style.underline;
+        cell.content = std::string(ch.utf8, ch.size);
+
+        if (is_selected)
+            cell.bg_color = text.color_selected;
+        else if (style.bg_color.ansi != AnsiColor_Unused)
+            cell.bg_color = style.bg_color;
+
+        if (cell.size > 1) {
+            auto& next_cell = cells_[cur_y * width_ + cur_x + 1];
+            next_cell.content.clear();
+            if (is_selected)
+                next_cell.bg_color = text.color_selected;
+            else if (style.bg_color.ansi != AnsiColor_Unused)
+                next_cell.bg_color = style.bg_color;
+        }
+    }
+}
+
 void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style, const Color& color)
 {
     // Apply clip region
@@ -817,11 +1025,10 @@ void DrawBuffer::ScrollBar(const Point& pos, int length, int offset, int content
                 continue;
             auto& cell = cells_[cy * width_ + pos.x];
             cell.size = 1;
+            cell.content = u8"█";
             if (is_thumb) {
-                cell.content = u8"\u2588";  // █ Full Block
                 cell.fg_color = thumb_color;
             } else {
-                cell.content = u8"\u2588";
                 cell.fg_color = track_color;
             }
         }
@@ -831,11 +1038,10 @@ void DrawBuffer::ScrollBar(const Point& pos, int length, int offset, int content
                 continue;
             auto& cell = cells_[pos.y * width_ + cx];
             cell.size = 1;
+            cell.content = u8"▄";
             if (is_thumb) {
-                cell.content = u8"\u2584";  // half Block
                 cell.fg_color = thumb_color;
             } else {
-                cell.content = u8"\u2584";
                 cell.fg_color = track_color;
             }
         }
@@ -889,18 +1095,18 @@ void DrawBuffer::FillBgColor(const Rect& _r, const Color& bgColor)
 /// </summary>
 
 
-void Event::set_key(uint32_t _key, uint32_t _vkey) { 
-    type = EventType_Key; 
-    key = _key; 
-    vkey = _vkey; 
+void Event::set_key(uint32_t _key, uint32_t _vkey) {
+    type = EventType_Key;
+    key = _key;
+    vkey = _vkey;
 }
-bool Event::any_button_down() const { 
-    return type == EventType_Mouse && button >= 1 && button <= 3; 
+bool Event::any_button_down() const {
+    return type == EventType_Mouse && button >= 1 && button <= 3;
 }
-bool Event::any_first_down() const { 
-    return first_down[0] || first_down[1] || first_down[2]; 
+bool Event::any_first_down() const {
+    return first_down[0] || first_down[1] || first_down[2];
 }
-void Event::reset() { 
+void Event::reset() {
     type = EventType_None;
     key = 0;
     vkey = 0;
@@ -2842,16 +3048,23 @@ void Slider::Event(const TUI::Event& ev)
 {
     if (mgr->hover_slider_ != this)
         return;
+    Point pt = { ev.x, ev.y };
     Point old_scroll_value = scroll_value;
     bool any_click = ev.any_button_down();
+    bool is_hover_x = false;
+    bool is_hover_y = false;
+    if (is_scroll_y) {
+        Rect scrollbar = { clip.x2 + 1, clip.y, clip.x2 + 1, clip.y2 };
+        is_hover_y = scrollbar.inside(pt);
+    }
+    if (is_scroll_x) {
+        Rect scrollbar = { clip.x, clip.y2 + 1, clip.x2, clip.y2 + 1 };
+        is_hover_x = scrollbar.inside(pt);
+    }
 
     if (any_click) {
-        Point pt = { ev.x, ev.y };
-
         if (is_scroll_y) {
-            Rect scrollbar = { clip.x2 + 1, clip.y, clip.x2 + 1, clip.y2 };
-            // Vertical scrollbar at x=clip.x2+1, y=[clip.y .. clip.y+length-1]
-            if (scrollbar.inside(pt)) {
+            if (is_hover_y) {
                 int click_offset = ev.y - clip.y;
                 int max_scroll = content_length.y - clip.height();
                 int thumb_size = std::max(1, clip.height() * clip.height() / content_length.y);
@@ -2868,9 +3081,7 @@ void Slider::Event(const TUI::Event& ev)
             }
         }
         if (is_scroll_x) {
-            Rect scrollbar = { clip.x, clip.y2 + 1, clip.x2, clip.y2 + 1 };
-            // Horizontal scrollbar at y=clip.y2+1, x=[clip.x .. clip.x+length-1]
-            if (scrollbar.inside(pt)) {
+            if (is_hover_x) {
                 int click_offset = ev.x - clip.x;
                 int max_scroll = content_length.x - clip.width();
                 int thumb_size = std::max(1, clip.width() * clip.width() / content_length.x);
@@ -2887,9 +3098,7 @@ void Slider::Event(const TUI::Event& ev)
     switch (ev.button) {
     case 4:
         if (is_scroll_y && is_scroll_x) {
-            Point pt = { ev.x, ev.y };
-            Rect scrollbar = { clip.x, clip.y2 + 1, clip.x2, clip.y2 + 1 };
-            if (scrollbar.inside(pt)) {
+            if (is_hover_x) {
                 if (scroll_value.x > 0) {
                     scroll_value.x--;
                 }
@@ -2913,9 +3122,7 @@ void Slider::Event(const TUI::Event& ev)
         break;
     case 5:
         if (is_scroll_y && is_scroll_x) {
-            Point pt = { ev.x, ev.y };
-            Rect scrollbar = { clip.x, clip.y2 + 1, clip.x2, clip.y2 + 1 };
-            if (scrollbar.inside(pt)) {
+            if (is_hover_x) {
                 if (scroll_value.x < scroll_max.x) {
                     scroll_value.x++;
                 }
@@ -2972,6 +3179,161 @@ Win* Slider::Clone() const
 ///
 /// Edit
 ///
+
+static void TextEvent(
+    Slider& slider,
+    Text& text,
+    Point& cursor,
+    int& drag_start,
+    bool& readonly,
+    std::function<bool(const TUI::Event&)>& on_key,
+    const TUI::Event& ev)
+{
+    Mgr* mgr = slider.mgr;
+    if (!mgr || mgr->notify_ != &slider)
+        return;
+
+    if (ev.type == EventType_Mouse) {
+        Point pt = { ev.x, ev.y };
+        slider.is_down = ev.any_button_down();
+
+        if (!slider.clip.inside(pt)) {
+            if (drag_start >= 0 && !slider.is_down)
+                drag_start = -1;
+            mgr->is_dirty = true;
+            return;
+        }
+
+        int lx = ev.x - slider.clip.x + slider.scroll_value.x;
+        int ly = ev.y - slider.clip.y + slider.scroll_value.y;
+        int idx = text.char_at(lx, ly);
+        bool is_first_down = ev.any_first_down();
+
+        if (drag_start >= 0 && slider.is_down) {
+            text.selected.start = std::min(drag_start, idx);
+            text.selected.end = std::max(drag_start, idx);
+            cursor = text.pos_of(idx);
+            mgr->is_dirty = true;
+            return;
+        }
+
+        if (is_first_down)
+            drag_start = idx;
+
+        if (drag_start >= 0 && !slider.is_down)
+            drag_start = -1;
+
+        if (ev.clicks == 2 && ev.button == 1) {
+            text.select_word(lx, ly);
+        }
+        else if (ev.any_button_down()) {
+            text.selected.unselect();
+            cursor = text.pos_of(idx);
+        }
+
+        mgr->cursor = {
+            slider.clip.x + cursor.x - slider.scroll_value.x,
+            slider.clip.y + cursor.y - slider.scroll_value.y
+        };
+        mgr->is_dirty = true;
+        return;
+    }
+
+    if (ev.type == EventType_Paste) {
+        int idx = text.cur_idx_of(cursor);
+        idx = text.delete_selected(idx);
+        idx = text.insert(idx, ev.paste_text);
+        text.selected.unselect();
+        cursor = text.pos_of(idx);
+        mgr->is_dirty = true;
+        return;
+    }
+
+    if (ev.type != EventType_Key)
+        return;
+
+    int idx = text.cur_idx_of(cursor);
+    bool handled = true;
+
+    if (on_key && on_key(ev))
+        return;
+
+    if (ev.vkey == VK_BACK) {
+        if (!readonly) {
+            idx = text.backspace(idx);
+            cursor = text.pos_of(idx);
+        }
+    }
+    else if (ev.vkey == VK_RETURN) {
+        if (!readonly) {
+            Point newline_pos = text.pos_of(idx);
+            text.enter(idx);
+            cursor = { 0, newline_pos.y + 1 };
+        }
+    }
+    else if (ev.vkey == VK_DELETE) {
+        if (!readonly) {
+            idx = text.del(idx);
+            cursor = text.pos_of(idx);
+        }
+    }
+    else if (ev.vkey == VK_LEFT || ev.vkey == VK_RIGHT ||
+             ev.vkey == VK_UP || ev.vkey == VK_DOWN ||
+             ev.vkey == VK_HOME || ev.vkey == VK_END) {
+        Point new_cursor;
+        if (ev.vkey == VK_LEFT)      new_cursor = text.left(idx);
+        else if (ev.vkey == VK_RIGHT) new_cursor = text.right(idx);
+        else if (ev.vkey == VK_UP)   new_cursor = text.up(idx);
+        else if (ev.vkey == VK_DOWN) new_cursor = text.down(idx);
+        else if (ev.vkey == VK_HOME) new_cursor = text.home(idx);
+        else                         new_cursor = text.end(idx);
+
+        int new_idx = text.cur_idx_of(new_cursor);
+        if (ev.shift) {
+            if (!text.selected.has_selection()) {
+                text.selected.start = idx;
+                text.selected.end = idx;
+            }
+            text.selected.start = std::min(text.selected.start, new_idx);
+            text.selected.end = std::max(text.selected.end, new_idx);
+        }
+        else {
+            text.selected.unselect();
+        }
+        cursor = new_cursor;
+    }
+    else if (ev.ctrl && ev.key == 3) {
+        std::string selected = text.get_selected();
+        if (!selected.empty())
+            CopyClipboard(selected);
+    }
+    else if (ev.ctrl && ev.key == 1) {
+        text.selected.start = 0;
+        text.selected.end = static_cast<int>(text.chars.size());
+    }
+    else if (ev.key >= 32 && ev.key < 0x10FFFF && !readonly) {
+        char utf8_buf[4];
+        int n = utf8_wctomb(utf8_buf, ev.key);
+        if (n > 0) {
+            std::string value(utf8_buf, n);
+            idx = text.delete_selected(idx);
+            idx = text.insert(idx, value);
+            text.selected.unselect();
+            cursor = text.pos_of(idx);
+        }
+    }
+    else {
+        handled = false;
+    }
+
+    if (handled) {
+        mgr->cursor = {
+            slider.clip.x + cursor.x - slider.scroll_value.x,
+            slider.clip.y + cursor.y - slider.scroll_value.y
+        };
+        mgr->is_dirty = true;
+    }
+}
 
 Edit::Edit(Mgr* mgr) :Slider(mgr) {
     color_selected = COLOR_SELECTED;
@@ -3039,185 +3401,187 @@ void Edit::setText(const std::string& _text)
 void Edit::Event(const TUI::Event& ev)
 {
     Slider::Event(ev);
-    if (mgr->notify_ != this)
-        return;
-
-    if (ev.type == EventType_Mouse) {
-        Point pt = { ev.x, ev.y };
-        is_down = ev.any_button_down();
-
-        if (!clip.inside(pt)) {
-            // If dragging outside clip, finalize drag
-            if (drag_start >= 0 && !is_down) {
-                drag_start = -1;
-            }
-            mgr->is_dirty = true;
-            return;
-        }
-
-        int lx = ev.x - clip.x + scroll_value.x;
-        int ly = ev.y - clip.y + scroll_value.y;
-        int idx = char_at(lx, ly);
-
-        if (idx < 0) {
-            mgr->is_dirty = true;
-            return;
-        }
-
-        // Detect first press of left button — start drag selection
-        bool is_first_down = ev.any_first_down();
-
-        // Dragging: extend selection from drag_start to current position
-        if (drag_start >= 0 && is_down) {
-            selected.start = std::min(drag_start, idx);
-            selected.end   = std::max(drag_start, idx);
-            Point p = pos_of(idx);
-            cursor.set(p.x, p.y);
-            mgr->is_dirty = true;
-            return;
-        }
-        if (is_first_down) {
-            drag_start = idx;
-        }
-        // Button released — finalize drag
-        if (drag_start >= 0 && !is_down) {
-            drag_start = -1;
-        }
-
-        if (ev.clicks == 2 && ev.button == 1) {
-            // Double-click: select word at clicked position
-            select_word(lx, ly);
-        } else if(ev.any_button_down()) {
-            // Single click: move cursor, clear selection
-            selected.unselect();
-            cursor = pos_of(idx);
-        }
-        mgr->cursor = { clip.x + cursor.x, clip.y + cursor.y };
-        mgr->is_dirty = true;
-    }
-    else if (ev.type == EventType_Paste) {
-        int cur_idx = cur_idx_of(cursor);
-        cur_idx = delete_selected(cur_idx);
-        size_t off = byte_offset_of(cur_idx);
-        text.insert(off, ev.paste_text);
-        reparse();
-        selected.unselect();
-    }
-    else if (ev.type == EventType_Key) {
-        int cur_idx = cur_idx_of(cursor);
-        bool handled = true;
-        if (on_key && on_key(ev)) {
-            return;
-        }
-        // Special keys via ev.key
-        if (ev.vkey == VK_BACK) { // Backspace
-            if (!readonly) {
-                cur_idx = backspace(cur_idx);
-                cursor = pos_of(cur_idx);
-            }
-        }
-        else if (ev.vkey == VK_RETURN) { // Enter — insert newline
-            if (!readonly) {
-                enter(cur_idx);
-                cursor.set(0, cursor.y + 1);
-            }
-        }
-        else if (ev.vkey == VK_DELETE) { // Delete — remove char at cursor
-            if (!readonly) {
-                cur_idx = del(cur_idx);
-                cursor = pos_of(cur_idx);
-            }
-        }
-        else if (ev.vkey == VK_LEFT || ev.vkey == VK_RIGHT
-            || ev.vkey == VK_UP || ev.vkey == VK_DOWN
-            || ev.vkey == VK_HOME || ev.vkey == VK_END) {
-            // Shift + arrow: extend selection instead of just moving cursor
-            if (ev.shift) {
-                Point new_cursor;
-                if (ev.vkey == VK_LEFT)  new_cursor = left(cur_idx);
-                else if (ev.vkey == VK_RIGHT) new_cursor = right(cur_idx);
-                else if (ev.vkey == VK_UP)    new_cursor = up(cur_idx);
-                else if (ev.vkey == VK_DOWN)  new_cursor = down(cur_idx);
-                else if (ev.vkey == VK_HOME)  new_cursor = home(cur_idx);
-                else                          new_cursor = end(cur_idx);
-
-                cursor = new_cursor;
-                int new_idx = cur_idx_of(cursor);
-                // Initialize anchor on first Shift+arrow press
-                if (!selected.has_selection()) {
-                    selected.start = cur_idx;
-                    selected.end = cur_idx;
-                }
-                // Extend selection — keep start <= end regardless of direction
-                selected.start = std::min(selected.start, new_idx);
-                selected.end = std::max(selected.end, new_idx);
-            }
-            else {
-                // No Shift: clear selection and move normally
-                selected.unselect();
-                if (ev.vkey == VK_LEFT)  cursor = left(cur_idx);
-                else if (ev.vkey == VK_RIGHT) cursor = right(cur_idx);
-                else if (ev.vkey == VK_UP)    cursor = up(cur_idx);
-                else if (ev.vkey == VK_DOWN)  cursor = down(cur_idx);
-                else if (ev.vkey == VK_HOME)  cursor = home(cur_idx);
-                else                          cursor = end(cur_idx);
-            }
-        }
-        else if (ev.ctrl && (ev.key == 3)) {  // Ctrl C
-            // Copy selection to clipboard
-            std::string sel = get_selected();
-            if (!sel.empty()) {
-                CopyClipboard(sel);
-            }
-        }
-        else if (ev.ctrl && (ev.key == 1)) {  // Ctrl A
-            selected.start = 0;
-            selected.end = (int)chars.size();
-        }
-        // Printable character — insert at cursor (replace selection first if active)
-        else if (ev.key >= 32 && ev.key < 0x10FFFF && !readonly) {
-            char utf8_buf[4];
-            int n = utf8_wctomb(utf8_buf, ev.key);
-            std::string ch_str(utf8_buf, n);
-
-            cur_idx = delete_selected(cur_idx);
-            size_t off = byte_offset_of(cur_idx);
-            text.insert(off, ch_str);
-            reparse();
-            selected.unselect();
-
-            // Move cursor after inserted character
-            if (cur_idx < static_cast<int>(chars.size())) {
-                Point p = position[cur_idx];
-                cursor.set(p.x + chars[cur_idx].char_width, p.y);
-            }
-            else {
-                auto ch = Char::from_code(ev.key);
-                cursor.x += ch.char_width;
-            }
-        }
-        else {
-            handled = false;
-        }
-
-        if (handled) {
-            mgr->cursor = { clip.x + cursor.x, clip.y + cursor.y };
-            mgr->is_dirty = true;
-        }
-    }
+    TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev);
 }
 
 void Edit::Copy(const Win* ob)
 {
     Slider::Copy(ob);
-    const Edit* o = dynamic_cast<const Edit*>(ob);
-    cursor = o->cursor;
-    readonly = o->readonly;
-    setText(o->text);
+    const Edit* other = dynamic_cast<const Edit*>(ob);
+    text = other->text;
+    chars = other->chars;
+    position = other->position;
+    bold = other->bold;
+    italic = other->italic;
+    underline = other->underline;
+    text_width = other->text_width;
+    text_height = other->text_height;
+    wrap_width = other->wrap_width;
+    selected = other->selected;
+    color_selected = other->color_selected;
+    cursor = other->cursor;
+    readonly = other->readonly;
 }
 Win* Edit::Clone() const
 {
     Edit* ob = new Edit(mgr);
+    ob->Copy(this);
+    return ob;
+}
+
+/// <summary>
+/// RichEdit
+/// </summary>
+
+RichEdit::RichEdit(Mgr* mgr)
+    : Slider(mgr)
+{
+    color_selected = COLOR_SELECTED;
+    is_notifiable = true;
+}
+
+bool RichEdit::ParseCmd(const std::string& cmd, EditLine& el)
+{
+    if (eqi(cmd, "Text")) {
+        setText(ParseText(el.tok_line()));
+        return true;
+    }
+    else if (eqi(cmd, "Style")) {
+        // Style <fgcolor> [<bgcolor>] [bold] [italic] [underline]
+        std::istringstream args(el.tok_line());
+        std::string fg;
+        if (!(args >> fg))
+            return false;
+
+        RichText::Style style;
+        style.fg_color = Color::Parse(fg);
+
+        auto is_flag = [](const std::string& value) {
+            return eqi(value, "bold") ||
+                   eqi(value, "italic") ||
+                   eqi(value, "underline");
+        };
+
+        std::string token;
+        if (args >> token) {
+            // A non-flag token after the foreground color is the optional
+            // background color. "Unused" explicitly means no background fill.
+            if (!is_flag(token)) {
+                if (!eqi(token, "Unused"))
+                    style.bg_color = Color::Parse(token);
+            }
+            else {
+                // The first token is already a style flag.
+                if (eqi(token, "bold")) style.bold = true;
+                else if (eqi(token, "italic")) style.italic = true;
+                else if (eqi(token, "underline")) style.underline = true;
+            }
+        }
+
+        while (args >> token) {
+            if (eqi(token, "bold"))
+                style.bold = true;
+            else if (eqi(token, "italic"))
+                style.italic = true;
+            else if (eqi(token, "underline"))
+                style.underline = true;
+            else
+                return false;
+        }
+
+        current_style = style;
+        return true;
+    }
+    else if (eqi(cmd, "AppendText")) {
+        appendText(ParseText(el.tok_line()), current_style);
+        return true;
+    }
+    return Win::ParseCmd(cmd, el);
+}
+
+void RichEdit::CalRect(Win* parent)
+{
+    Slider::CalRect(parent);
+
+    if (is_scroll_y) {
+        content_length.y = std::max(content_length.y, text_height + 1);
+        scroll_max.y = std::max(0, content_length.y - clip.height());
+    }
+    if (is_scroll_x) {
+        content_length.x = std::max(content_length.x, text_width + 1);
+        scroll_max.x = std::max(0, content_length.x - clip.width());
+    }
+}
+
+void RichEdit::Paint(DrawBuffer& drawbuf)
+{
+    PaintBorder(drawbuf);
+    PaintText(drawbuf);
+    PaintScrollBar(drawbuf);
+    PaintChild(drawbuf);
+}
+
+void RichEdit::PaintText(DrawBuffer& drawbuf)
+{
+    drawbuf.PushClip(clip);
+
+    if (!text.empty()) {
+        int tx = clip.x - scroll_value.x;
+        int ty = clip.y - scroll_value.y;
+        drawbuf.Text({ tx, ty }, *this);
+    }
+
+    if (mgr && mgr->notify_ == this) {
+        int cx = clip.x + cursor.x - scroll_value.x;
+        int cy = clip.y + cursor.y - scroll_value.y;
+        drawbuf.SetColor({ cx, cy }, COLOR_CURSOR, COLOR_CURSOR_BG);
+    }
+
+    drawbuf.PopClip();
+}
+
+void RichEdit::setText(const std::string& _text)
+{
+    RichText::setText(_text, local.width());
+    selected.unselect();
+    cursor = { 0, 0 };
+    if (mgr)
+        mgr->is_dirty = true;
+}
+
+void RichEdit::Event(const TUI::Event& ev)
+{
+    Slider::Event(ev);
+    TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev);
+}
+
+void RichEdit::Copy(const Win* ob)
+{
+    Slider::Copy(ob);
+    const RichEdit* other = dynamic_cast<const RichEdit*>(ob);
+    if (!other)
+        return;
+
+    text = other->text;
+    chars = other->chars;
+    position = other->position;
+    styles = other->styles;
+    bold = other->bold;
+    italic = other->italic;
+    underline = other->underline;
+    text_width = other->text_width;
+    text_height = other->text_height;
+    wrap_width = other->wrap_width;
+    selected = other->selected;
+    color_selected = other->color_selected;
+    cursor = other->cursor;
+    readonly = other->readonly;
+    current_style = other->current_style;
+}
+
+Win* RichEdit::Clone() const
+{
+    RichEdit* ob = new RichEdit(mgr);
     ob->Copy(this);
     return ob;
 }
@@ -3246,6 +3610,9 @@ WinPtr Mgr::Create(std::string csid)
     }
     else if (eqi(csid, "Edit")) {
         ob = new Edit(this);
+    }
+    else if (eqi(csid, "RichEdit")) {
+        ob = new RichEdit(this);
     }
     return WinPtr(ob);
 }

@@ -4,16 +4,6 @@
 
 ---
 
-## 🔴 高优先级（核心功能缺失）
-
-### 1. Linux/macOS 事件线程未实现
-- **位置**: `Terminal::event_thread()` (Unix)
-- **问题**: Unix 平台的 `event_thread()` 函数体为空，无法接收键盘/鼠标输入。
-- **影响**: 在 Linux/macOS 上 TUI 完全不可交互。
-- **建议**: 使用 `read(STDIN_FILENO)` + ANSI escape sequence 解析（鼠标 SGR 模式、Bracketed Paste），或使用 `libuv` / `poll`。
-
----
-
 ## 🟢 低优先级（改进与增强）
 
 ### 11. utf8_char_width() — Emoji/组合字符处理不完整
@@ -46,15 +36,9 @@
 - **问题**: 仅有 `on_click`，没有鼠标悬停/离开事件。
 - **建议**: 添加 `std::function<void()> on_hover;` 和 `on_leave`。
 
-### 24. 缺少 CMakeLists.txt / 构建系统文档
-- **位置**: 项目根目录
-- **问题**: 没有发现构建配置文件或编译说明。
-- **建议**: 添加 `CMakeLists.txt` 和 `README.md` 中的编译指南。
-
 ### 25. 缺少单元测试
 - **位置**: —
 - **问题**: 核心功能（UTF-8 解析、颜色解析、布局计算等）没有测试覆盖。
-- **建议**: 使用 Google Test 或 Catch2 添加基础单元测试。
 
 ---
 
@@ -62,10 +46,10 @@
 
 | 模块 | 高优 | 中优 | 低优 |
 |------|------|------|------|
-| Terminal (跨平台) | #1, #4 | — | #15 |
-| DrawBuffer | — | — | #14 |
+| Terminal (跨平台) |  |  | #15 |
+| DrawBuffer |  |  | #14 |
 | Win / 布局系统 |  |  | #16, #17 |
-| 项目基础设施 | — | — | #24, #25 |
+| 项目基础设施 |  |  | #25 |
 
 ---
 

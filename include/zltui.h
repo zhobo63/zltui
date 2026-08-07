@@ -145,6 +145,7 @@ enum AnsiColor_ : uint8_t {
     AnsiColor_Bright_Cyan,
     AnsiColor_Bright_White,
 
+    AnsiColor_Unused,
     AnsiColor_Max,
 };
 
@@ -188,18 +189,6 @@ struct Color {
 
 #define VK_EOF 0x07
 
-struct Char {
-    union {
-        uint8_t code[4];
-        uint32_t ch;
-    };
-    char utf8[4];
-    int size;
-    int char_width;
-
-    static Char from_code(uint32_t cp);
-};
-
 struct Selection {
     int start = -1;
     int end = -1;
@@ -211,6 +200,18 @@ struct Selection {
 };
 
 struct Text {
+    struct Char {
+        union {
+            uint8_t code[4];
+            uint32_t ch;
+        };
+        char utf8[4];
+        int size;
+        int char_width;
+
+        static Char from_code(uint32_t cp);
+    };
+
     std::string text;
     std::vector<Char> chars;
     std::vector<Point> position;
@@ -225,7 +226,8 @@ struct Text {
     Selection selected;
     Color color_selected;
 
-    void setText(const std::string& _text, int wrap);
+    virtual void setText(const std::string& _text, int wrap);
+
     std::string get_selected() const;
     int char_at(int x, int y) const;
     Point pos_of(int idx) const;                // Helper: get display position from char index
@@ -233,17 +235,42 @@ struct Text {
     int cur_idx_of(const Point& cursor) const;  // Helper: find current char index from cursor position
     void select_word(int x, int y);             // select word at clicked position
     void reparse();                             // Helper: reparse text without clearing selection
-    int delete_selected(int idx);
-    int enter(int idx);
-    int backspace(int idx);
-    int del(int idx);
-    int insert(int idx, const std::string text);
+    virtual int delete_selected(int idx);
+    virtual int enter(int idx);
+    virtual int backspace(int idx);
+    virtual int del(int idx);
+    virtual int insert(int idx, const std::string text);
     Point home(int idx);
     Point end(int idx);
     Point left(int idx);
     Point right(int idx);
     Point up(int idx);
     Point down(int idx);
+};
+
+struct RichText: Text
+{
+    struct Style {
+        Color fg_color = AnsiColor_White;
+        Color bg_color = AnsiColor_Unused;      // AnsiColor_Unused: DO NOT fill bg_color
+        bool bold = false;
+        bool italic = false;
+        bool underline = false;
+    };
+
+    std::vector<Style> styles;       //style for each character, size=chars.size()
+
+    // [start, end) `start` 和 `end` 是字元索引
+    void setStyle(int start, int end, const Color &fgColor, const Color &bgColor, bool bold, bool italic, bool underline);
+    void setStyle(int start, int end, const Style &style);
+    void setText(const std::string& _text, int wrap) override;
+    int delete_selected(int idx) override;
+    int enter(int idx) override;
+    int backspace(int idx) override;
+    int del(int idx) override;
+    int insert(int idx, const std::string text) override;
+
+    void appendText(const std::string& _text, const Style &style);
 };
 
 struct Cell {
@@ -286,6 +313,7 @@ struct DrawBuffer {
     void clear();
     void Text(const std::string& text, const Point& pos, const Color& color = AnsiColor_White, bool bold = false, bool italic = false, bool underline = false);
     void Text(const Point& pos, const TUI::Text& text, const Color& color = AnsiColor_White);
+    void Text(const Point& pos, const TUI::RichText& text);
     void Border(const Rect& r, const Color& bgcolor, BorderStyle_ style = BorderStyle_Round, const Color& color = AnsiColor_Bright_White);
     void ScrollBar(const Point& pos, int length, int offset, int content_length, bool vertical, const Color& track_color = AnsiColor_White, const Color& thumb_color = AnsiColor_Bright_White);
     void SetColor(const Point& pos, const Color& fgColor, const Color& bgColor);
@@ -595,6 +623,27 @@ struct Edit : Slider, Text
     bool readonly = false;
 
     std::function<bool(const TUI::Event &evt)> on_key;
+};
+
+struct RichEdit : Slider, RichText
+{
+    RichEdit(Mgr *mgr);
+
+    bool ParseCmd(const std::string& cmd, EditLine& el) override;
+    void CalRect(Win* parent) override;
+    void Paint(DrawBuffer& drawbuf) override;
+    void PaintText(DrawBuffer& drawbuf);
+    void setText(const std::string& _text);
+    void Event(const TUI::Event& ev) override;
+    void Copy(const Win* ob) override;
+    Win* Clone() const override;
+
+    Point cursor;
+    int drag_start = -1;
+    bool readonly = false;
+
+    std::function<bool(const TUI::Event &evt)> on_key;
+    RichText::Style current_style;
 };
 
 struct Mgr : Win

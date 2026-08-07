@@ -63,6 +63,7 @@ bgColor RGB(40,60,80)           # 背景色
 - ANSI 名稱：`Black`, `Red`, `Green`, `Yellow`, `Blue`, `Magenta`, `Cyan`, `White`
 - 亮色：`BrightBlack`, `BrightRed`, ... , `BrightWhite`
 - RGB：`RGB(r,g,b)`，例如 `RGB(0,250,250)`
+- #rrggbb #rgb
 
 ### Dock（錨定佈局）
 
