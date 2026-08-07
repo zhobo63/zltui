@@ -12,6 +12,39 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <csignal>
+
+// Keep the public Event key values portable.  On Windows these are supplied
+// by windows.h; Unix terminals use the same values when reporting special
+// keys through VT sequences.
+#ifndef VK_BACK
+#define VK_BACK    0x08
+#define VK_TAB     0x09
+#define VK_RETURN  0x0D
+#define VK_ESCAPE  0x1B
+#define VK_SPACE   0x20
+#define VK_PRIOR   0x21
+#define VK_NEXT    0x22
+#define VK_END     0x23
+#define VK_HOME    0x24
+#define VK_LEFT    0x25
+#define VK_UP      0x26
+#define VK_RIGHT   0x27
+#define VK_DOWN    0x28
+#define VK_INSERT  0x2D
+#define VK_DELETE  0x2E
+#define VK_F1      0x70
+#define VK_F2      0x71
+#define VK_F3      0x72
+#define VK_F4      0x73
+#define VK_F5      0x74
+#define VK_F6      0x75
+#define VK_F7      0x76
+#define VK_F8      0x77
+#define VK_F9      0x78
+#define VK_F10     0x79
+#define VK_F11     0x7A
+#define VK_F12     0x7B
+#endif
 #endif
 
 #include <thread>
@@ -21,6 +54,8 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <memory>
+#include <chrono>
 
 #define NAMESPACE_BEGIN(n) namespace n {
 #define NAMESPACE_END };
@@ -288,6 +323,7 @@ struct Event
     int y = 0;
     int clicks = 0;             // clicks: number of clicks (1=single, 2=double)
     bool first_down[3] = { false };
+    bool mouse_motion = false;
 
     bool shift = false;
     bool ctrl = false;

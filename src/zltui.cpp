@@ -2,6 +2,14 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <cstring>
+#include <condition_variable>
+
+#ifndef _WIN32
+#include <cerrno>
+#include <poll.h>
+#include <sys/ioctl.h>
+#endif
 
 #define USE_REMOTE_LOG 1
 #if USE_REMOTE_LOG
@@ -140,8 +148,10 @@ static void send_enter() {
 #else
     // Push a carriage return ('\r') into the tty input buffer so that
     // kbhit()/getch() or read_key() returns immediately.
+#ifdef TIOCSTI
     char c = '\r';
     ioctl(STDIN_FILENO, TIOCSTI, &c);
+#endif
 #endif
 }
 
@@ -899,6 +909,7 @@ void Event::reset() {
     y = 0;
     clicks = 0;
     first_down[0] = first_down[1] = first_down[2] = false;
+    mouse_motion = false;
     shift = false;
     ctrl = false;
     alt = false;
@@ -1029,6 +1040,7 @@ static bool parse_sgr_mouse(Event& ev)
     ev.type = EventType_Mouse;
     ev.x = cx - 1; // convert to 0-based
     ev.y = cy - 1;
+    ev.mouse_motion = (cb & 32) != 0;
     ev.shift = (cb & 4) != 0;
     ev.alt = (cb & 8) != 0;
     ev.ctrl = (cb & 16) != 0;
@@ -1542,7 +1554,162 @@ void Terminal::event_thread()
 
 #else
 
+void CopyClipboard(const std::string& text)
+{
+    (void)text;
+}
+
 struct termios originalTermios_;
+
+// Decode one UTF-8 byte stream while preserving partial characters between
+// read() calls.  VT control sequences are ASCII, while ordinary terminal
+// input may contain arbitrary UTF-8 text.
+struct Utf8InputDecoder {
+    uint32_t codepoint = 0;
+    uint32_t minimum = 0;
+    int remaining = 0;
+
+    template <typename Emit>
+    void feed(unsigned char byte, Emit emit)
+    {
+        if (remaining == 0) {
+            if (byte < 0x80) {
+                emit(byte);
+            }
+            else if ((byte & 0xE0) == 0xC0) {
+                codepoint = byte & 0x1F;
+                minimum = 0x80;
+                remaining = 1;
+            }
+            else if ((byte & 0xF0) == 0xE0) {
+                codepoint = byte & 0x0F;
+                minimum = 0x800;
+                remaining = 2;
+            }
+            else if ((byte & 0xF8) == 0xF0) {
+                codepoint = byte & 0x07;
+                minimum = 0x10000;
+                remaining = 3;
+            }
+            else {
+                emit(0xFFFD);
+            }
+            return;
+        }
+
+        if ((byte & 0xC0) != 0x80) {
+            // Invalid continuation: discard the incomplete character and
+            // process this byte again as the beginning of a new character.
+            codepoint = 0;
+            minimum = 0;
+            remaining = 0;
+            emit(0xFFFD);
+            feed(byte, emit);
+            return;
+        }
+
+        codepoint = (codepoint << 6) | (byte & 0x3F);
+        if (--remaining == 0) {
+            uint32_t cp = codepoint;
+            bool valid = cp >= minimum && cp <= 0x10FFFF &&
+                         !(cp >= 0xD800 && cp <= 0xDFFF);
+            emit(valid ? cp : 0xFFFD);
+            codepoint = 0;
+            minimum = 0;
+        }
+    }
+};
+
+static void emit_linux_input(Event& ev, uint32_t cp)
+{
+    std::lock_guard<std::mutex> lock(Terminal::s_event_mutex);
+    static int held_button = 0;
+
+    // ESC is ambiguous: it may be Escape itself, or the prefix of an Alt
+    // key/VT sequence.  The event thread resolves a lone ESC after a short
+    // timeout; if the next character is already available, treat it as Alt.
+    if (ev.is_vt && ev.seq == "\x1b" && cp != '[' && cp != 'O') {
+        ev.reset();
+        ev.type = EventType_Key;
+        ev.key = cp;
+        ev.alt = true;
+        s_events.push_back(ev);
+        ev.reset();
+        return;
+    }
+
+    // parse_sequence() consumes ESC-prefixed VT sequences.  Once a complete
+    // sequence has populated ev, publish it and start the next event.
+    if (ev.parse_sequence(cp)) {
+        if (ev.type != EventType_None) {
+            if (ev.type == EventType_Mouse && ev.mouse_motion) {
+                // SGR bit 5 means motion.  Preserve the currently held
+                // button so Mgr can continue drag operations, while motion
+                // with no button remains a hover event.
+                ev.button = held_button;
+                s_events.push_back(ev);
+                ev.reset();
+                return;
+            }
+
+            if (ev.type == EventType_Mouse) {
+                if (ev.button >= 1 && ev.button <= 3) {
+                    ev.first_down[ev.button - 1] = held_button == 0;
+                    held_button = ev.button;
+                    ev.clicks = 1;
+                }
+                else if (ev.button == 0 && !ev.mouse_motion) {
+                    held_button = 0;
+                }
+            }
+            s_events.push_back(ev);
+            ev.reset();
+        }
+        return;
+    }
+
+    ev.type = EventType_Key;
+    if (cp == 0) {
+        ev.key = ' ';
+        ev.ctrl = true;
+    }
+    else if (cp == 8 || cp == 127) {
+        ev.key = cp;
+        ev.vkey = VK_BACK;
+    }
+    else if (cp == '\t') {
+        ev.key = '\t';
+        ev.vkey = VK_TAB;
+    }
+    else if (cp == '\n' || cp == '\r') {
+        ev.key = cp;
+        ev.vkey = VK_RETURN;
+    }
+    else if (cp >= 1 && cp <= 26) {
+        ev.key = static_cast<uint32_t>('a' + cp - 1);
+        ev.ctrl = true;
+    }
+    else {
+        ev.key = cp;
+    }
+
+    s_events.push_back(ev);
+    ev.reset();
+}
+
+static void flush_linux_escape(Event& ev)
+{
+    std::lock_guard<std::mutex> lock(Terminal::s_event_mutex);
+    if (!ev.is_vt || ev.seq != "\x1b")
+        return;
+
+    ev.reset();
+    ev.type = EventType_Key;
+    ev.key = '\x1b';
+    ev.vkey = VK_ESCAPE;
+    s_events.push_back(ev);
+    ev.reset();
+}
 
 void Terminal::EnableRawMode()
 {
@@ -1563,6 +1730,14 @@ void Terminal::EnableRawMode()
 
     std::cout << "\033[?1003h\033[?1006h\033[?2004h";  // Enable mouse reporting (all
                                                        // motion) + SGR + Bracketed Paste
+    std::cout << "\033[?1049h" << HIDE_CURSOR;
+
+    if (!s_event_thread) {
+        s_running.store(true);
+        s_event_thread = new std::thread([] {
+            event_thread();
+        });
+    }
 }
 
 void Terminal::DisableRawMode()
@@ -1582,7 +1757,63 @@ Point Terminal::GetSize()
 
 void Terminal::event_thread()
 {
-    //TODO
+    pollfd pfd{};
+    pfd.fd = STDIN_FILENO;
+    pfd.events = POLLIN;
+
+    Event ev;
+    Utf8InputDecoder decoder;
+    auto escape_started = std::chrono::steady_clock::time_point{};
+
+    while (s_running.load()) {
+        int ready = poll(&pfd, 1, 100);
+        if (ready < 0) {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        if (ready == 0)
+        {
+            if (ev.is_vt && ev.seq == "\x1b") {
+                auto now = std::chrono::steady_clock::now();
+                if (escape_started.time_since_epoch().count() == 0)
+                    escape_started = now;
+                else if (now - escape_started >= std::chrono::milliseconds(50)) {
+                    flush_linux_escape(ev);
+                    escape_started = {};
+                }
+            }
+            continue;
+        }
+        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))
+            break;
+        if (!(pfd.revents & POLLIN))
+            continue;
+
+        unsigned char buffer[4096];
+        ssize_t count = ::read(STDIN_FILENO, buffer, sizeof(buffer));
+        if (count < 0) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+                continue;
+            break;
+        }
+        if (count == 0)
+            break;
+
+        for (ssize_t i = 0; i < count; ++i) {
+            decoder.feed(buffer[i], [&ev](uint32_t cp) {
+                Terminal::emit_linux_input(ev, cp);
+            });
+        }
+
+        if (ev.is_vt && ev.seq == "\x1b") {
+            if (escape_started.time_since_epoch().count() == 0)
+                escape_started = std::chrono::steady_clock::now();
+        }
+        else {
+            escape_started = {};
+        }
+    }
 }
 
 #endif

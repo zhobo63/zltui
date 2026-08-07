@@ -2,6 +2,8 @@
 #include <iostream>
 #include <filesystem>
 #include <functional>
+#include <string>
+#include <windows.h>
 
 #include "zltui.h"
 
@@ -11,19 +13,22 @@ int main()
 
     bool quit = false;
 
+
     TUI::Color col;
     TUI::Point pos;
     int offset = 0;
 
 // AI Agent UI Layout:
 // ┌───────────────────────────────────────────────┐
-// │ 🤖 AI Agent — gpt-4o | ████████░░ 82%        │ ← Title Bar (Dock_Top)
-// ├──────────────┬────────────────────────────────┤
-// │ Tools Panel  │ Chat / Output Area             │ ← Split: Left|Right
-// │ ✅ Read file │ [Agent]: Analyzing code...     │
-// │ ⏳ Edit file │ ┌──────────────┐               │
-// │ 🔧 Spawn ag. │ │  Code Block   │               │
-// │ 📊 Diags     │ └──────────────┘               │
+// │ 🤖 AI Agent — qwen3.6 | ████████░░ 82%       │ ← Title Bar (Dock_Top)
+// ├─Files─────────┬─Output────────────────────────┤
+// │               │                               │ ← Split: Left|Right
+// │ 📁 ..        │ [Agent]: Analyzing codebase... │
+// │ 📁 src       │ ┌──────────────┐               │
+// │ 📄 main.cpp  │ │ # this is foo│               │
+// │ 📄 zltui.h   │ │ void foo() { │               │
+// │              │ │ }            │               │
+// │              │ └──────────────┘               │
 // │              │ [Agent]: Changes applied.      │
 // ├──────────────┴────────────────────────────────┤
 // │ > Type your message...                        │ ← Input (Dock_Down)
