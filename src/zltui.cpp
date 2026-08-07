@@ -908,18 +908,270 @@ void Event::reset() {
     paste_text.clear();
 }
 
-void Event::parse_sequence(uint32_t ch)
+// Parse modifier from a CSI sequence parameter.
+// Windows VT Input encodes modifiers as the second semicolon-separated value:
+//   1=none, 2=Shift, 3=Alt, 4=Shift+Alt, 5=Ctrl, 6=Ctrl+Shift,
+//   7=Ctrl+Alt, 8=Ctrl+Shift+Alt
+static void parse_csi_modifier(Event& ev, const std::string& seq)
 {
-    //TODO
+    // Find the first semicolon after "ESC["
+    size_t semi = seq.find(';', 2);
+    if (semi == std::string::npos) return;
+
+    // Read the modifier number up to the next non-digit
+    int mod = 0;
+    size_t p = semi + 1;
+    while (p < seq.size() && seq[p] >= '0' && seq[p] <= '9')
+        mod = mod * 10 + (seq[p++] - '0');
+
+    if (mod >= 2) {
+        ev.shift = ((mod & 2) != 0);
+        ev.alt = ((mod & 4) != 0);
+        ev.ctrl = ((mod & 8) != 0);
+    }
 }
+
+// Combine a UTF-16 surrogate pair into a single codepoint.
+// Returns the combined codepoint, or 0 if `ch` is not a high surrogate.
+static uint32_t combine_surrogate(uint16_t hi, uint16_t lo)
+{
+    return 0x10000 + (static_cast<uint32_t>(hi - 0xD800) << 10) + (lo - 0xDC00);
+}
+
+// Per-thread state for buffering high surrogates.
+static thread_local uint16_t s_pending_hi = 0;
+
+// Decode a UTF-16 code unit into a Unicode codepoint, handling surrogate pairs.
+// Returns the codepoint on success, or 0 if:
+//   - ch is a high surrogate (buffered for next call)
+//   - ch is a lone low surrogate (discarded)
+static uint32_t decode_utf16(uint16_t ch)
+{
+    // High surrogate — buffer it
+    if (ch >= 0xD800 && ch <= 0xDBFF) {
+        s_pending_hi = ch;
+        return 0;
+    }
+
+    // Low surrogate — combine with pending high surrogate
+    if (ch >= 0xDC00 && ch <= 0xDFFF) {
+        if (s_pending_hi != 0) {
+            uint32_t cp = combine_surrogate(s_pending_hi, ch);
+            s_pending_hi = 0;
+            return cp;
+        }
+        // Lone low surrogate — discard
+        return 0;
+    }
+
+    // Normal BMP character — flush any pending surrogate
+    s_pending_hi = 0;
+    return static_cast<uint32_t>(ch);
+}
+
+static void parse_ss3_key(Event& ev)
+{
+    if (ev.seq.size() < 3)
+        return;
+
+    switch (ev.seq[2]) {
+    case 'P': ev.set_key(0, VK_F1); break;
+    case 'Q': ev.set_key(0, VK_F2); break;
+    case 'R': ev.set_key(0, VK_F3); break;
+    case 'S': ev.set_key(0, VK_F4); break;
+    default: break;
+    }
+    parse_csi_modifier(ev, ev.seq);
+}
+
+static bool parse_bracketed_paste(Event& ev, uint32_t ch)
+{
+    uint32_t cp = decode_utf16(static_cast<uint16_t>(ch));
+
+    if (!cp)
+        return true;
+
+    char utf8[4];
+    int n = utf8_wctomb(utf8, cp);
+    ev.seq += std::string(utf8, n);
+
+    if (ev.seq.size() >= 6 && ev.seq.substr(ev.seq.length() - 6) == "\x1b[201~") {
+        ev.type = EventType_Paste;
+        ev.paste_text = ev.seq.substr(6, ev.seq.length() - 12);
+        ev.is_paste_bracket = false;
+    }
+    return true;
+}
+
+// Parse a complete CSI mouse event: ESC [ < Cb ; Cx ; Cy M/m
+// Returns true if the sequence was consumed and ev is populated.
+static bool parse_sgr_mouse(Event& ev)
+{
+    const std::string& seq = ev.seq;
+    // Format: "\x1b[<Cb;Cx;CyM"  (button release uses 'm')
+
+    size_t p = 3;
+    auto next_semi = [&]() -> int {
+        int val = 0;
+        while (p < seq.size() && seq[p] == ';') { ++p; break; }
+        while (p < seq.size() && seq[p] >= '0' && seq[p] <= '9')
+            val = val * 10 + (seq[p++] - '0');
+        return val;
+        };
+
+    int cb = next_semi(); // button code
+    int cx = next_semi(); // column (1-based)
+    int cy = next_semi(); // row    (1-based)
+
+    if (p >= seq.size()) return false;
+    bool is_release = (seq[p] == 'm');
+
+    ev.type = EventType_Mouse;
+    ev.x = cx - 1; // convert to 0-based
+    ev.y = cy - 1;
+    ev.shift = (cb & 4) != 0;
+    ev.alt = (cb & 8) != 0;
+    ev.ctrl = (cb & 16) != 0;
+
+    // Windows VT Input uses a hybrid encoding:
+    //   Button codes (CSI-style): 0=left, 1=middle, 2=right, 3=move
+    //   Scroll codes (SGR-style): 64=up, 65=down, 66=h-left, 67=h-right
+    if (cb >= 64 && cb <= 67) {
+        switch (cb) {
+        case 64: ev.button = 4; break; // scroll up
+        case 65: ev.button = 5; break; // scroll down
+        case 66: ev.button = 6; break; // h-scroll left
+        case 67: ev.button = 7; break; // h-scroll right
+        }
+    }
+    else {
+        switch (cb & 3) {
+        case 0: ev.button = is_release ? 0 : 1; break;
+        case 1: ev.button = is_release ? 0 : 2; break;
+        case 2: ev.button = is_release ? 0 : 3; break;
+        case 3: ev.button = 0;            break; // motion
+        }
+    }
+
+    return true;
+}
+
+
+bool Event::parse_sequence(uint32_t ch)
+{
+    if (is_paste_bracket) {
+        return parse_bracketed_paste(*this, ch);
+    }
+
+    if (!is_vt) {
+        if (ch != '\x1b')
+            return false;
+        is_vt = true;
+        seq.clear();
+    }
+
+    seq.push_back(static_cast<char>(ch));
+
+    if (seq.size() == 1)
+        return true;
+
+    if (seq.size() >= 6 && seq.compare(0, 6, "\x1b[200~") == 0) {
+        is_paste_bracket = true;
+        return true;
+    }
+
+    if (seq.size() >= 3 && seq[0] == '\x1b' && seq[1] == '[' && seq[2] == '<') {
+        if (seq.back() == 'M' || seq.back() == 'm') {
+            parse_sgr(ch);
+        }
+        return true;
+    }
+
+    if (seq.size() >= 3 && seq[0] == '\x1b' && seq[1] == '[') {
+        parse_csi(ch);
+        return true;
+    }
+
+    if (seq.size() >= 3 && seq[0] == '\x1b' && seq[1] == 'O') {
+        parse_ss3_key(*this);
+        return true;
+    }
+
+    if (seq.size() > 16) {
+        LOG(::Color::RED, "parse_sequence %s", seq.c_str());
+        reset();
+        return false;
+    }
+
+    return true;
+}
+
 void Event::parse_csi(uint32_t ch)
 {
-    //TODO
+    (void)ch;
+    if (seq.size() < 3 || seq[0] != '\x1b' || seq[1] != '[')
+        return;
+
+    if (seq.back() == '~') {
+        std::string num = seq.substr(2, seq.length() - 3);
+        int n = 0;
+        for (char c : num) {
+            if (c >= '0' && c <= '9') {
+                n = n * 10 + (c - '0');
+            }
+        }
+        switch (n) {
+        case 1:  set_key(0, VK_HOME);   break;
+        case 2:  set_key(0, VK_INSERT); break;
+        case 3:  set_key(0, VK_DELETE); break;
+        case 4:  set_key(0, VK_END);    break;
+        case 5:  set_key(0, VK_PRIOR);  break;
+        case 6:  set_key(0, VK_NEXT);   break;
+        case 11: set_key(0, VK_F1);     break;
+        case 12: set_key(0, VK_F2);     break;
+        case 13: set_key(0, VK_F3);     break;
+        case 14: set_key(0, VK_F4);     break;
+        case 15: set_key(0, VK_F5);     break;
+        case 17: set_key(0, VK_F6);     break;
+        case 18: set_key(0, VK_F7);     break;
+        case 19: set_key(0, VK_F8);     break;
+        case 20: set_key(0, VK_F9);     break;
+        case 21: set_key(0, VK_F10);    break;
+        case 23: set_key(0, VK_F11);    break;
+        case 24: set_key(0, VK_F12);    break;
+        default: break;
+        }
+        parse_csi_modifier(*this, seq);
+        return;
+    }
+
+    char term = seq.back();
+    switch (term) {
+    case 'A': set_key(0, VK_UP);    break;
+    case 'B': set_key(0, VK_DOWN);  break;
+    case 'C': set_key(0, VK_RIGHT); break;
+    case 'D': set_key(0, VK_LEFT);  break;
+    case 'H': set_key(0, VK_HOME);  break;
+    case 'F': set_key(0, VK_END);   break;
+    case 'Z': set_key('\t', VK_TAB); shift = true; break;
+    default: break;
+    }
+    parse_csi_modifier(*this, seq);
 }
 void Event::parse_sgr(uint32_t ch)
 {
-    //TODO
+    (void)ch;
+    if (seq.size() < 3 || seq[0] != '\x1b' || seq[1] != '[' || seq[2] != '<')
+        return;
+
+    if (seq.back() != 'M' && seq.back() != 'm')
+        return;
+
+    if (parse_sgr_mouse(*this)) {
+        type = EventType_Mouse;
+    }
 }
+
 
 /// <summary>
 /// Terminal
@@ -1157,45 +1409,7 @@ void CopyClipboard(const std::string& text)
     }
 }
 
-// Combine a UTF-16 surrogate pair into a single codepoint.
-// Returns the combined codepoint, or 0 if `ch` is not a high surrogate.
-static uint32_t combine_surrogate(uint16_t hi, uint16_t lo)
-{
-    return 0x10000 + (static_cast<uint32_t>(hi - 0xD800) << 10) + (lo - 0xDC00);
-}
-
-// Per-thread state for buffering high surrogates.
-static thread_local uint16_t s_pending_hi = 0;
-
-// Decode a UTF-16 code unit into a Unicode codepoint, handling surrogate pairs.
-// Returns the codepoint on success, or 0 if:
-//   - ch is a high surrogate (buffered for next call)
-//   - ch is a lone low surrogate (discarded)
-static uint32_t decode_utf16(uint16_t ch)
-{
-    // High surrogate — buffer it
-    if (ch >= 0xD800 && ch <= 0xDBFF) {
-        s_pending_hi = ch;
-        return 0;
-    }
-
-    // Low surrogate — combine with pending high surrogate
-    if (ch >= 0xDC00 && ch <= 0xDFFF) {
-        if (s_pending_hi != 0) {
-            uint32_t cp = combine_surrogate(s_pending_hi, ch);
-            s_pending_hi = 0;
-            return cp;
-        }
-        // Lone low surrogate — discard
-        return 0;
-    }
-
-    // Normal BMP character — flush any pending surrogate
-    s_pending_hi = 0;
-    return static_cast<uint32_t>(ch);
-}
-
-static uint32_t map_key_event(const KEY_EVENT_RECORD& key)
+static uint32_t map_key_event(const KEY_EVENT_RECORD& key, Event &ev)
 {
     if (key.uChar.UnicodeChar != 0) {
         return decode_utf16(key.uChar.UnicodeChar);
@@ -1211,219 +1425,6 @@ static uint32_t map_key_event(const KEY_EVENT_RECORD& key)
     }
 }
 
-// Parse a complete CSI mouse event: ESC [ < Cb ; Cx ; Cy M/m
-// Returns true if the sequence was consumed and ev is populated.
-static bool parse_sgr_mouse(Event &ev)
-{
-    const std::string& seq = ev.seq;
-    // Format: "\x1b[<Cb;Cx;CyM"  (button release uses 'm')
-
-    size_t p = 3;
-    auto next_semi = [&]() -> int {
-        int val = 0;
-        while (p < seq.size() && seq[p] == ';') { ++p; break; }
-        while (p < seq.size() && seq[p] >= '0' && seq[p] <= '9')
-            val = val * 10 + (seq[p++] - '0');
-        return val;
-    };
-
-    int cb = next_semi(); // button code
-    int cx = next_semi(); // column (1-based)
-    int cy = next_semi(); // row    (1-based)
-
-    if (p >= seq.size()) return false;
-    bool is_release = (seq[p] == 'm');
-
-    ev.type = EventType_Mouse;
-    ev.x = cx - 1; // convert to 0-based
-    ev.y = cy - 1;
-    ev.shift = (cb & 4) != 0;
-    ev.alt = (cb & 8) != 0;
-    ev.ctrl = (cb & 16) != 0;
-
-    // Windows VT Input uses a hybrid encoding:
-    //   Button codes (CSI-style): 0=left, 1=middle, 2=right, 3=move
-    //   Scroll codes (SGR-style): 64=up, 65=down, 66=h-left, 67=h-right
-    if (cb >= 64 && cb <= 67) {
-        switch (cb) {
-        case 64: ev.button = 4; break; // scroll up
-        case 65: ev.button = 5; break; // scroll down
-        case 66: ev.button = 6; break; // h-scroll left
-        case 67: ev.button = 7; break; // h-scroll right
-        }
-    } else {
-        switch (cb & 3) {
-        case 0: ev.button = is_release ? 0 : 1; break;
-        case 1: ev.button = is_release ? 0 : 2; break;
-        case 2: ev.button = is_release ? 0 : 3; break;
-        case 3: ev.button = 0;            break; // motion
-        }
-    }
-
-    return true;
-}
-
-// Parse modifier from a CSI sequence parameter.
-// Windows VT Input encodes modifiers as the second semicolon-separated value:
-//   1=none, 2=Shift, 3=Alt, 4=Shift+Alt, 5=Ctrl, 6=Ctrl+Shift,
-//   7=Ctrl+Alt, 8=Ctrl+Shift+Alt
-static void parse_csi_modifier(Event &ev, const std::string& seq)
-{
-    // Find the first semicolon after "ESC["
-    size_t semi = seq.find(';', 2);
-    if (semi == std::string::npos) return;
-
-    // Read the modifier number up to the next non-digit
-    int mod = 0;
-    size_t p = semi + 1;
-    while (p < seq.size() && seq[p] >= '0' && seq[p] <= '9')
-        mod = mod * 10 + (seq[p++] - '0');
-
-    if (mod >= 2) {
-        ev.shift = ((mod & 2) != 0);
-        ev.alt   = ((mod & 4) != 0);
-        ev.ctrl  = ((mod & 8) != 0);
-    }
-}
-
-bool parse_vt_sequence(INPUT_RECORD &rec, Event &ev){
-    auto& key = rec.Event.KeyEvent;
-    uint16_t ch = key.uChar.UnicodeChar;
-
-    // Only process printable characters and ESC from VT input.
-    // Control keys (arrows, function keys) are handled by the normal path.
-    if (ch == 0 && key.wVirtualKeyCode != VK_ESCAPE)
-        return false;
-
-    char byte = static_cast<char>(ch);
-
-    // Inside bracketed paste — accumulate UTF-8 encoded characters until end marker.
-    if (ev.is_paste_bracket) {
-        uint32_t cp = decode_utf16(ch);
-
-        // High surrogate buffered or lone low surrogate discarded — nothing to emit yet
-        if (!cp)
-            return true;
-
-        char utf8[4];
-        int n = utf8_wctomb(utf8, cp);
-        ev.seq += std::string(utf8, n);
-
-        std::string bracket_end = ev.seq.substr(ev.seq.length() - 6);
-        if (bracket_end == "\x1b[201~") {
-            ev.type = EventType_Paste;
-            ev.paste_text = ev.seq.substr(6, ev.seq.length() - 12);
-        }
-        return true;  // consumed, still buffering
-    }
-
-    // Normal VT sequence buffering.
-    ev.key = ch;
-    ev.seq += byte;
-
-    // If we just received ESC, wait for more characters.
-    if (byte == '\x1b') {
-        ev.is_vt = true;
-        return true;  // consumed, but incomplete
-    }
-    if (!ev.is_vt)
-        return false;
-    if (ev.is_vt && ev.seq.length() < 3)
-        return true;
-    // Try to parse the accumulated buffer as a complete sequence.
-    size_t len = ev.seq.length();
-    if (len >= 6 && ev.seq.substr(0,6) == "\x1b[200~") {
-        ev.is_paste_bracket = true;
-    }
-    else if (len >= 3 && ev.seq[0]=='\x1b' && ev.seq[1] == '[' && ev.seq[2] == '<') {
-        if (ch == 'M' || ch == 'm') {
-            //LOG(::Color::WHITE, "%s", ev.seq.c_str());
-            if (parse_sgr_mouse(ev)) {
-                ev.type = EventType_Mouse;
-            }
-        }
-    }
-/*
- * CSI Key sequences:
- *
- *   Arrow keys:       \x1b[A (Up)  \x1b[B (Down)  \x1b[C (Right)  \x1b[D (Left)
- *   Home / End:       \x1b[H / \x1b[F    or    \x1b[1~ / \x1b[4~
- *   Page Up/Down:     \x1b[5~ / \x1b[6~
- *   Delete / Insert:  \x1b[3~ / \x1b[2~
- *
- *   F1–F4 (SS3):      \x1bOP / \x1bOQ / \x1bOR / \x1bOS
- *   F5–F12:           \x1b[15~ .. \x1b[24~
- *
- *   Windows VT Input modifier format:
- *     \x1b[<Cb;Modifier;Key M/m
- *     Modifier bits: 1=Shift, 2=Ctrl, 4=Alt (combined)
- */
-    else if (len >= 3 && ev.seq[0] == '\x1b' && ev.seq[1] == '[') {
-        // CSI + single letter — arrow keys, Home/End
-        char term = ev.seq[2];
-        switch (term) {
-            case 'A': ev.set_key(0, VK_UP);    break;
-            case 'B': ev.set_key(0, VK_DOWN);  break;
-            case 'C': ev.set_key(0, VK_RIGHT); break;
-            case 'D': ev.set_key(0, VK_LEFT);  break;
-            case 'H': ev.set_key(0, VK_HOME);  break;
-            case 'F': ev.set_key(0, VK_END);   break;
-            default: break;
-        }
-        parse_csi_modifier(ev, ev.seq);
-    }
-    else if (len >= 3 && ev.seq[0] == '\x1b' && ev.seq[1] == 'O') {
-        // SS3 — F1–F4
-        char term = ev.seq[2];
-        switch (term) {
-            case 'P': ev.set_key(0, VK_F1);  break;
-            case 'Q': ev.set_key(0, VK_F2);  break;
-            case 'R': ev.set_key(0, VK_F3);  break;
-            case 'S': ev.set_key(0, VK_F4);  break;
-            default:  break;
-        }
-        parse_csi_modifier(ev, ev.seq);
-    }
-
-    if (len >= 4 && ev.seq[0] == '\x1b' && ev.seq[1] == '[' && ev.seq.back() == '~') {
-        // CSI n~ — Home/End/PgUp/PgDown/Del/Ins/F5-F12
-        std::string num = ev.seq.substr(2, len - 2);
-        int n = 0;
-        for (char c : num) { if (c >= '0' && c <= '9') n = n * 10 + (c - '0'); }
-        switch (n) {
-            case 1: ev.set_key(0, VK_HOME);     break;
-            case 2: ev.set_key(0, VK_INSERT);   break;
-            case 3: ev.set_key(0, VK_DELETE);   break;
-            case 4: ev.set_key(0, VK_END);      break;
-            case 5: ev.set_key(0, VK_PRIOR);    break; // Page Up
-            case 6: ev.set_key(0, VK_NEXT);     break; // Page Down
-            case 11: ev.set_key(0, VK_F1);      break;
-            case 12: ev.set_key(0, VK_F2);      break;
-            case 13: ev.set_key(0, VK_F3);      break;
-            case 14: ev.set_key(0, VK_F4);      break;
-            case 15: ev.set_key(0, VK_F5);      break;
-            case 17: ev.set_key(0, VK_F6);      break;
-            case 18: ev.set_key(0, VK_F7);      break;
-            case 19: ev.set_key(0, VK_F8);      break;
-            case 20: ev.set_key(0, VK_F9);      break;
-            case 21: ev.set_key(0, VK_F10);     break;
-            case 23: ev.set_key(0, VK_F11);     break;
-            case 24: ev.set_key(0, VK_F12);     break;
-            default: break;
-        }
-        parse_csi_modifier(ev, ev.seq);
-    }
-
-    // Buffer is growing but not yet a recognized sequence.
-    // If it gets too long, discard and treat as normal input.
-    if (ev.seq.size() > 16) {
-        LOG(::Color::RED, "parse_vt_sequence %s", ev.seq.c_str());
-        ev.reset();
-    }
-
-    return ev.is_vt;  // consumed, waiting for more
-}
-
 void Terminal::event_thread()
 {
     INPUT_RECORD rec;
@@ -1437,12 +1438,12 @@ void Terminal::event_thread()
         ReadConsoleInputW(hIn, &rec, 1, &count);
         if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown) {
             // Try to parse VT/ANSI escape sequences first.
-            bool vt_parsed = parse_vt_sequence(rec, ev);
+            bool vt_parsed = ev.parse_sequence(rec.Event.KeyEvent.uChar.UnicodeChar);
 
             if (!vt_parsed) {
                 ev.type = EventType_Key;
                 ev.vkey = rec.Event.KeyEvent.wVirtualKeyCode;
-                ev.key = map_key_event(rec.Event.KeyEvent);
+                ev.key = map_key_event(rec.Event.KeyEvent, ev);
                 auto& cks = rec.Event.KeyEvent.dwControlKeyState;
                 ev.shift = (cks & SHIFT_PRESSED) != 0;
                 ev.ctrl = (cks & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
@@ -1816,6 +1817,8 @@ Color Win::COLOR_BTN(50, 50, 50);
 Color Win::COLOR_TRACK(44, 44, 44);
 Color Win::COLOR_THUMB(159, 159, 159);
 Color Win::COLOR_SELECTED(120, 120, 120);
+Color Win::COLOR_CURSOR(AnsiColor_Black);
+Color Win::COLOR_CURSOR_BG(120, 180, 255);
 
 bool Win::Parse(EditLine& el)
 {
@@ -1929,6 +1932,33 @@ bool Win::ParseCmd(const std::string &cmd, EditLine& el)
     }
     else if (eqi(cmd, "Autosize")) {
         autosize_ = ParseAutosize(el.tok());
+    }
+    else if (eqi(cmd, "COLOR_BG")) {
+        COLOR_BG = Color::Parse(el.tok());
+    }
+    else if (eqi(cmd, "COLOR_HOVER")) {
+        COLOR_HOVER = Color::Parse(el.tok());
+    }
+    else if (eqi(cmd, "COLOR_DOWN")) {
+        COLOR_DOWN = Color::Parse(el.tok());
+    }
+    else if (eqi(cmd, "COLOR_BTN")) {
+        COLOR_BTN = Color::Parse(el.tok());
+    }
+    else if (eqi(cmd, "COLOR_TRACK")) {
+        COLOR_TRACK = Color::Parse(el.tok());
+    }
+    else if (eqi(cmd, "COLOR_THUMB")) {
+        COLOR_THUMB = Color::Parse(el.tok());
+    }
+    else if (eqi(cmd, "COLOR_SELECTED")) {
+        COLOR_SELECTED = Color::Parse(el.tok());
+    }
+    else if (eqi(cmd, "COLOR_CURSOR")) {
+        COLOR_CURSOR = Color::Parse(el.tok());
+    }
+    else if (eqi(cmd, "COLOR_CURSOR_BG")) {
+        COLOR_CURSOR_BG = Color::Parse(el.tok());
     }
     else {
         ret = false;
@@ -2762,7 +2792,7 @@ void Edit::PaintText(DrawBuffer& drawbuf)
     if (mgr->notify_ == this) {
         int cx = clip.x + cursor.x - scroll_value.x;
         int cy = clip.y + cursor.y - scroll_value.y;
-        drawbuf.SetBgColor({ cx,cy }, Color(200, 200, 200));
+        drawbuf.SetColor({ cx,cy }, COLOR_CURSOR, COLOR_CURSOR_BG);
     }
     drawbuf.PopClip();
 }
@@ -3064,9 +3094,7 @@ bool Mgr::Update(Terminal& terminal)
             }
         }
     }
-    if (is_dirty) {
-        std::cout << CursorMove(cursor.x, cursor.y);
-    }
+    std::cout << CursorMove(cursor.x, cursor.y);
     return is_dirty;
 }
 void Mgr::Paint(DrawBuffer& drawbuf)

@@ -302,7 +302,7 @@ struct Event
     bool any_button_down() const;
     bool any_first_down() const;
     void reset();
-    void parse_sequence(uint32_t ch);
+    bool parse_sequence(uint32_t ch);
     void parse_csi(uint32_t ch);
     void parse_sgr(uint32_t ch);
 };
@@ -475,6 +475,8 @@ struct Win
     static Color COLOR_TRACK;
     static Color COLOR_THUMB;
     static Color COLOR_SELECTED;
+    static Color COLOR_CURSOR;
+    static Color COLOR_CURSOR_BG;
 };
 
 struct Label : Win, Text
