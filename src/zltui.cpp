@@ -3003,6 +3003,11 @@ void Slider::CalRect(Win* parent)
     content_length = { 0,0 };
     if (is_scroll_y) {
         clip.x2--;
+    }
+    if (is_scroll_x) {
+        clip.y2--;
+    }
+    if (is_scroll_y) {
         if (child.size() > 0) {
             auto ch = child.back();
             content_length.y = std::max(content_length.y, ch->local.y2 + 1);
@@ -3013,7 +3018,6 @@ void Slider::CalRect(Win* parent)
         scroll_max.y = std::max(0, content_length.y - clip.height());
     }
     if (is_scroll_x) {
-        clip.y2--;
         if (child.size() > 0) {
             auto ch = child.back();
             content_length.x = std::max(content_length.x, ch->local.x2 + 1);
