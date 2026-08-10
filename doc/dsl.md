@@ -30,6 +30,8 @@ mgr.Parse(R"(
 | `Label` | 文字標籤 | Win + Text |
 | `Button` | 按鈕（含 hover/down 狀態） | Label |
 | `Check` | 核取方塊（切換 checked） | Button |
+| `Edit` | 可編輯文字元件，支援游標、選取與輸入 | Slider + Text |
+| `RichEdit` | 可編輯 RichText 元件，每個字元可有獨立樣式 | Slider + RichText |
 
 ## 通用屬性（Win）
 
@@ -42,6 +44,7 @@ Name myWidget          # 元件名稱，用於 GetUI() 查詢
 Rect x y x2 y2         # 位置與大小（相對於父容器 clip 區域）
 Visible true            # 是否可見
 Notify true             # 是否接收事件
+Autosize None           # None / TextWidth / TextHeight / TextSize
 ```
 
 ### 邊框
@@ -101,6 +104,17 @@ Dock Left|Right 0 0 100 100
 DockOffset ox oy ox2 oy2       # 從錨定位置偏移的像素值
 ```
 
+### Autosize（內容自動調整大小）
+
+```dsl
+Autosize None        # 使用 Rect，不自動調整
+Autosize TextWidth   # 依文字內容寬度調整寬度
+Autosize TextHeight  # 依文字內容高度調整高度
+Autosize TextSize    # 同時依文字寬度與高度調整
+```
+
+`Autosize` 會在元件重新計算 layout 時，依 `GetTextSize()` 的結果調整 `Rect`。對文字元件使用時，文字必須先設定，才能得到正確的內容尺寸。
+
 ### Arrange（子元件排列）
 
 ```dsl
@@ -153,6 +167,114 @@ Vertical true                    # true=垂直捲軸，false=水平
 TrackColor RGB(44,44,44)         # 軌道顏色
 ThumbColor BrightWhite           # 滑塊顏色
 ```
+
+## Edit 專屬屬性
+
+`Edit` 支援文字輸入、游標、選取、複製、貼上與捲動：
+
+```dsl
+Object Edit {
+    Name input
+    Rect 0 0 60 4
+    ScrollY true
+    Text "Type here..."
+}
+```
+
+目前可用的互動包括：
+
+- Backspace、Delete、Enter；
+- 方向鍵、Home、End；
+- Shift + 方向鍵選取；
+- 滑鼠點擊、拖曳選取與雙擊選字；
+- Ctrl+A 全選、Ctrl+C 複製；
+- Windows 使用 `CF_UNICODETEXT` 複製 Unicode 文字。
+
+## RichEdit 專屬屬性
+
+`RichEdit` 使用 `RichText::Style` 儲存每個字元的樣式。除了普通 `Text` 外，還支援以目前樣式追加文字。
+
+### Text
+
+```dsl
+Text "Build report"
+```
+
+`Text` 會取代目前內容並重設 RichText 的字元樣式。
+
+### Style
+
+```dsl
+Style <fgcolor> [<bgcolor>] [bold] [italic] [underline]
+```
+
+`Style` 設定後續 `AppendText` 使用的目前樣式。樣式旗標可以任意組合，未指定的旗標為 `false`：
+
+```dsl
+Object RichEdit {
+    Name output
+    Rect 0 0 70 10
+    ScrollY true
+
+    Text ""
+
+    Style BrightWhite
+    AppendText "Build: "
+
+    Style BrightGreen bold
+    AppendText "success"
+
+    Style Yellow Unused italic
+    AppendText " warning"
+
+    Style White Red bold underline
+    AppendText " error"
+}
+```
+
+範例中的：
+
+```dsl
+Style BrightGreen bold
+```
+
+表示前景色為 `BrightGreen`、粗體開啟；
+
+```dsl
+Style Yellow Unused italic
+```
+
+表示黃色斜體，且不填背景色。
+
+### AppendText
+
+```dsl
+AppendText "文字內容"
+```
+
+`AppendText` 將文字追加到目前內容，並套用最近一次 `Style` 指定的樣式。文字支援 `u8"..."` 與 `\\n` 換行：
+
+```dsl
+Object RichEdit {
+    Rect 0 0 70 6
+    Text ""
+    Style BrightCyan
+    AppendText u8"第一行\\n"
+    Style BrightYellow bold
+    AppendText u8"第二行"
+}
+```
+
+### RichEdit 與 Markdown
+
+Markdown 目前透過 C++ API 使用，不是 RichEdit DSL 命令：
+
+```cpp
+TUI::RichEdit* edit = new TUI::RichEdit(&mgr);
+TUI::Markdown(edit, markdown_text);
+```
+
+Markdown 支援標題、粗體、斜體、顏色 tag、引用、列表、表格、水平線與 fenced code block。詳細說明請參考 [`doc/richedit.md`](richedit.md)。
 
 ## 完整範例
 

@@ -3450,6 +3450,13 @@ bool Edit::ParseCmd(const std::string& cmd, EditLine& el)
     }
     return ret;
 }
+Point Edit::GetTextSize() const
+{
+    Text natural;
+    natural.setText(text, 0);
+    return { natural.text_width, natural.text_height };
+}
+
 void Edit::CalRect(Win* parent)
 {
     Slider::CalRect(parent);
@@ -3594,6 +3601,13 @@ bool RichEdit::ParseCmd(const std::string& cmd, EditLine& el)
         return true;
     }
     return Win::ParseCmd(cmd, el);
+}
+
+Point RichEdit::GetTextSize() const
+{
+    Text natural;
+    natural.setText(text, 0);
+    return { natural.text_width, natural.text_height };
 }
 
 void RichEdit::CalRect(Win* parent)

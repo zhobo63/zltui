@@ -610,6 +610,7 @@ struct Edit : Slider, Text
 
     bool ParseCmd(const std::string& cmd, EditLine& el) override;
     void CalRect(Win* parent) override;
+    Point GetTextSize() const override;
     void Paint(DrawBuffer& drawbuf) override;
     void PaintText(DrawBuffer& drawbuf);
     void setText(const std::string& _text);
@@ -630,6 +631,7 @@ struct RichEdit : Slider, RichText
 
     bool ParseCmd(const std::string& cmd, EditLine& el) override;
     void CalRect(Win* parent) override;
+    Point GetTextSize() const override;
     void Paint(DrawBuffer& drawbuf) override;
     void PaintText(DrawBuffer& drawbuf);
     void setText(const std::string& _text);
