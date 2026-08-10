@@ -4,6 +4,7 @@
 #include <sstream>
 #include <cstring>
 #include <condition_variable>
+#include <climits>
 
 #ifndef _WIN32
 #include <cerrno>
@@ -79,6 +80,48 @@ static int utf8_mbtowc(uint32_t& cp, const uint8_t* s, int len)
         cp=c;
         return 1;
     }
+}
+
+static int utf8_mbtowc(std::vector<wchar_t>& wtext, const std::string& text)
+{
+    wtext.clear();
+    if (text.size() > static_cast<size_t>(INT_MAX))
+        return -1;
+
+    wtext.reserve(text.size());
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(text.data());
+    int len = static_cast<int>(text.size());
+
+    while (len > 0) {
+        uint32_t cp = 0;
+        int n = utf8_mbtowc(cp, p, len);
+        if (n <= 0) {
+            cp = 0xFFFD;
+            n = 1;
+        }
+
+        if (cp <= 0xFFFF) {
+            // UTF-16 cannot contain unpaired surrogate code points.
+            if (cp >= 0xD800 && cp <= 0xDFFF)
+                cp = 0xFFFD;
+            wtext.push_back(static_cast<wchar_t>(cp));
+        }
+        else if (cp <= 0x10FFFF) {
+            cp -= 0x10000;
+            wtext.push_back(static_cast<wchar_t>(0xD800 + (cp >> 10)));
+            wtext.push_back(static_cast<wchar_t>(0xDC00 + (cp & 0x3FF)));
+        }
+        else {
+            wtext.push_back(static_cast<wchar_t>(0xFFFD));
+        }
+
+        p += n;
+        len -= n;
+    }
+
+    if (wtext.size() > static_cast<size_t>(INT_MAX))
+        return -1;
+    return static_cast<int>(wtext.size());
 }
 
 static int utf8_wctomb(char buf[4], uint32_t cp)
@@ -699,6 +742,12 @@ int RichText::insert(int idx, const std::string value)
     return idx + static_cast<int>(parsed.chars.size());
 }
 
+RichText::Style RichText::RichTextStyle(const Color& fg, const Color& bg, bool bold, bool italic, bool underline)
+{
+    return {
+        fg, bg, bold, italic, underline
+    };
+}
 
 /// <summary>
 /// Cell
@@ -715,6 +764,13 @@ void Cell::reset()
     italic = false;
     underline = false;
 }
+
+bool Cell::operator==(const Cell& o) const
+{
+    return size == o.size && bold == o.bold && italic == o.italic && underline == o.underline &&
+        fg_color == o.fg_color && bg_color == o.bg_color && content == o.content;
+}
+
 
 BorderStyle_ ParseBorderStyle(const std::string& param)
 {
@@ -753,6 +809,7 @@ void DrawBuffer::clear()
         cell.reset();
     }
 }
+
 
 void DrawBuffer::Text(const std::string& text, const Point& pos, const Color& color, bool bold, bool italic, bool underline)
 {
@@ -833,9 +890,9 @@ void DrawBuffer::Text(const Point& pos, const TUI::Text& text, const Color& colo
             if (cell.size > 1) {
                 auto& next_cell = cells_[cur_y * width_ + cur_x + 1];
                 next_cell.content = "";
-                if (is_sel) {
-                    next_cell.bg_color = text.color_selected;
-                }
+                //if (is_sel) {
+                //    next_cell.bg_color = text.color_selected;
+                //}
             }
         }
     }
@@ -882,11 +939,11 @@ void DrawBuffer::Text(const Point& pos, const TUI::RichText& text)
 
         if (cell.size > 1) {
             auto& next_cell = cells_[cur_y * width_ + cur_x + 1];
-            next_cell.content.clear();
-            if (is_selected)
-                next_cell.bg_color = text.color_selected;
-            else if (style.bg_color.ansi != AnsiColor_Unused)
-                next_cell.bg_color = style.bg_color;
+            next_cell.content = "";
+            //if (is_selected)
+            //    next_cell.bg_color = text.color_selected;
+            //else if (style.bg_color.ansi != AnsiColor_Unused)
+            //    next_cell.bg_color = style.bg_color;
         }
     }
 }
@@ -1414,6 +1471,21 @@ void Terminal::Resize()
     //std::cout << ANSI_CLEAR_SCREEN;
 }
 
+static bool is_terminal_control(const std::string& content)
+{
+    if (content.empty())
+        return true;
+
+    uint32_t cp = 0;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(content.data());
+    int n = utf8_mbtowc(cp, bytes, static_cast<int>(content.size()));
+    if (n <= 0)
+        return true;
+
+    // C0 controls, DEL, and C1 controls must not be emitted as terminal text.
+    return cp < 0x20 || cp == 0x7F || (cp >= 0x80 && cp <= 0x9F);
+}
+
 void Terminal::Render()
 {
     auto size = GetSize();
@@ -1426,8 +1498,8 @@ void Terminal::Render()
         pre_buf.resize(size.x, size.y);
     }
 
-    Color cur_fg;
-    Color cur_bg;
+    Color cur_fg = AnsiColor_White;
+    Color cur_bg = AnsiColor_Black;
     bool cur_bold = false;
     bool cur_italic = false;
     bool cur_underline = false;
@@ -1439,9 +1511,23 @@ void Terminal::Render()
     out.reserve(size.x * size.y * 30);
 
     for (int y = 0; y < cur_buf.height_; ++y) {
+        bool same_line = true;
         for (int x = 0; x < cur_buf.width_; ++x) {
             auto& cur_cell = cur_buf.cells_[yw + x];
             auto& pre_cell = pre_buf.cells_[yw + x];
+            if (cur_cell == pre_cell) {
+                continue;
+            }
+            same_line = false;
+            break;
+        }
+        if (same_line) {
+            yw += size.x;
+            continue;
+        }
+        for (int x = 0; x < cur_buf.width_; ++x) {
+            auto& cur_cell = cur_buf.cells_[yw + x];
+            //auto& pre_cell = pre_buf.cells_[yw + x];
 
             //if (cur_cell == pre_cell)
             //    continue;
@@ -1472,7 +1558,9 @@ void Terminal::Render()
                 cur_underline = cur_cell.underline;
                 out += cur_underline ? ANSI_UNDER : "\033[24m";
             }
-            if (cur_cell.size == 1 && cur_cell.content[0] == '\n') {
+            if (cur_cell.content.empty()) {
+            }
+            if (is_terminal_control(cur_cell.content)) {
                 out += " ";
             }
             else {
@@ -1613,18 +1701,37 @@ Point Terminal::GetSize()
 
 void CopyClipboard(const std::string& text)
 {
-    HGLOBAL hglb = GlobalAlloc(GMEM_MOVEABLE, text.size() + 1);
-    if (hglb) {
-        char* p = static_cast<char*>(GlobalLock(hglb));
-        memcpy(p, text.data(), text.size());
-        p[text.size()] = '\0';
-        GlobalUnlock(hglb);
-        if (OpenClipboard(nullptr)) {
-            EmptyClipboard();
-            SetClipboardData(CF_TEXT, hglb);
-            CloseClipboard();
-        }
+    // Convert the library's UTF-8 text to UTF-16 for CF_UNICODETEXT.
+    std::vector<wchar_t> utf16;
+    if (utf8_mbtowc(utf16, text) < 0)
+        return;
+
+    HGLOBAL hglb = GlobalAlloc(
+        GMEM_MOVEABLE | GMEM_ZEROINIT,
+        (utf16.size() + 1) * sizeof(wchar_t));
+    if (!hglb)
+        return;
+
+    wchar_t* dst = static_cast<wchar_t*>(GlobalLock(hglb));
+    if (!dst) {
+        GlobalFree(hglb);
+        return;
     }
+
+    if (!utf16.empty())
+        memcpy(dst, utf16.data(), utf16.size() * sizeof(wchar_t));
+    dst[utf16.size()] = L'\0';
+    GlobalUnlock(hglb);
+
+    if (!OpenClipboard(nullptr)) {
+        GlobalFree(hglb);
+        return;
+    }
+
+    EmptyClipboard();
+    if (!SetClipboardData(CF_UNICODETEXT, hglb))
+        GlobalFree(hglb);
+    CloseClipboard();
 }
 
 static uint32_t map_key_event(const KEY_EVENT_RECORD& key, Event &ev)
@@ -3588,6 +3695,522 @@ Win* RichEdit::Clone() const
     RichEdit* ob = new RichEdit(mgr);
     ob->Copy(this);
     return ob;
+}
+
+/// <summary>
+/// Markdown
+/// </summary>
+
+enum TableBorderIndex {
+    TableVertical,
+    TableHorizontal,
+    TableCornerTL,
+    TableTopJoin,
+    TableCornerTR,
+    TableMiddleLeft,
+    TableCross,
+    TableMiddleRight,
+    TableCornerBL,
+    TableBottomJoin,
+    TableCornerBR,
+    TableBorderCount
+};
+
+std::string MarkdownStyle::table_border[TableBorderCount] = {
+        u8"│", u8"─", u8"┌", u8"┬", u8"┐", u8"├", u8"┼", u8"┤", u8"└", u8"┴", u8"┘"
+};
+
+MarkdownStyle MarkdownStyle::DEFAULT = [] {
+    MarkdownStyle result;
+
+    result.text = RichText::RichTextStyle(Color(150,150,150));
+    result.bold_text = RichText::RichTextStyle(Color(255,255,255), AnsiColor_Unused, true);
+    result.italic_text = RichText::RichTextStyle(Color(220, 90, 90), AnsiColor_Unused, false, true);
+    result.code = RichText::RichTextStyle(AnsiColor_Bright_Green, AnsiColor_Black);
+    result.horizontal_rule = RichText::RichTextStyle(Color(100, 100, 100), AnsiColor_Unused, true);
+    result.quote = RichText::RichTextStyle(AnsiColor_Bright_Blue, AnsiColor_Unused, false, true);
+
+    result.heading[0] = RichText::RichTextStyle(Color(140, 190, 255), AnsiColor_Unused, true);
+    result.heading[1] = RichText::RichTextStyle(Color(140, 190, 255), AnsiColor_Unused, true);
+    result.heading[2] = RichText::RichTextStyle(Color(95, 200, 150), AnsiColor_Unused, true);
+    result.heading[3] = RichText::RichTextStyle(Color(95, 200, 150), AnsiColor_Unused, true, false, true);
+    result.heading[4] = RichText::RichTextStyle(Color(95, 200, 150), AnsiColor_Unused, true, true, true);
+    result.heading[5] = RichText::RichTextStyle(Color(95, 200, 150), AnsiColor_Unused, true, true);
+
+    result.table_header = RichText::RichTextStyle(AnsiColor_Bright_White, AnsiColor_Unused, true);
+    result.table_cell = result.text;
+    result.table_border_style.fg_color = Color(100, 100, 100);
+    result.table_separator.fg_color = Color(100, 100, 100);
+    result.table_separator.bold = true;
+
+    for (int i = 0; i < 6; ++i)
+        result.heading_rule[i] = result.heading[i];
+
+    auto replacement = [](const std::string& source,
+                          const Color& color,
+                          bool bold = true) {
+        MarkdownStyle::Replacement value;
+        value.source = source;
+        value.text = source;
+        value.style.fg_color = color;
+        value.style.bold = bold;
+        return value;
+    };
+
+    result.replacements.push_back(replacement(u8"✅", AnsiColor_Bright_Green));
+    result.replacements.push_back(replacement(u8"❌", AnsiColor_Bright_Red));
+    result.replacements.push_back(replacement(u8"⚠️", AnsiColor_Bright_Yellow));
+    result.replacements.push_back(replacement(u8"🔥", AnsiColor_Bright_Red));
+    result.replacements.push_back(replacement(u8"💡", AnsiColor_Bright_Cyan));
+
+    MarkdownStyle::Replacement bullet;
+    bullet.source = "- ";
+    bullet.text = u8"🔘 ";
+    bullet.style.fg_color = AnsiColor_Bright_Cyan;
+    bullet.style.bold = true;
+    result.replacements.push_back(bullet);
+
+    return result;
+}();
+
+void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdown_style)
+{
+    if (!edit)
+        return;
+
+    //edit->setText("");
+
+    auto append_inline = [&](const std::string& input, RichText::Style base_style) {
+        std::string plain;
+        RichText::Style run_style = base_style;
+
+        auto flush = [&]() {
+            if (!plain.empty()) {
+                edit->appendText(plain, run_style);
+                plain.clear();
+            }
+        };
+
+        auto is_marker = [](const std::string& marker) {
+            return marker == "**" || marker == "__" ||
+                   marker == "*" || marker == "_";
+        };
+
+        auto has_closing_marker = [&](size_t start, const std::string& marker) {
+            return input.find(marker, start) != std::string::npos;
+        };
+
+        struct TagState {
+            std::string name;
+            RichText::Style previous;
+        };
+        std::vector<TagState> tag_stack;
+        std::vector<RichText::Style> bold_styles;
+        std::vector<RichText::Style> italic_styles;
+
+        for (size_t i = 0; i < input.size();) {
+            if (input[i] == '<') {
+                size_t close = input.find('>', i + 1);
+                if (close != std::string::npos) {
+                    std::string tag = input.substr(i + 1, close - i - 1);
+                    bool closing = !tag.empty() && tag[0] == '/';
+                    std::string name = closing ? tag.substr(1) : tag;
+
+                    if (closing) {
+                        if (!tag_stack.empty() &&
+                            eqi(tag_stack.back().name, name.c_str())) {
+                            flush();
+                            run_style = tag_stack.back().previous;
+                            tag_stack.pop_back();
+                            i = close + 1;
+                            continue;
+                        }
+                    }
+                    else {
+                        size_t equal = tag.find('=');
+                        if (equal != std::string::npos) {
+                            std::string key = tag.substr(0, equal);
+                            std::string value = tag.substr(equal + 1);
+                            if (eqi(key, "fg") || eqi(key, "bg")) {
+                                flush();
+                                tag_stack.push_back({ key, run_style });
+                                if (eqi(key, "fg"))
+                                    run_style.fg_color = Color::Parse(value);
+                                else
+                                    run_style.bg_color = Color::Parse(value);
+                                i = close + 1;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Apply the longest matching replacement first. This allows a
+            // replacement such as an emoji sequence to contain multiple code points.
+            const MarkdownStyle::Replacement* replacement = nullptr;
+            for (const auto& candidate : markdown_style.replacements) {
+                if (candidate.source.empty() ||
+                    input.compare(i, candidate.source.size(), candidate.source) != 0)
+                    continue;
+                if (!replacement || candidate.source.size() > replacement->source.size())
+                    replacement = &candidate;
+            }
+
+            if (replacement) {
+                flush();
+                edit->appendText(replacement->text, replacement->style);
+                i += replacement->source.size();
+                continue;
+            }
+
+            std::string marker;
+            if (i + 1 < input.size()) {
+                std::string two = input.substr(i, 2);
+                if (is_marker(two))
+                    marker = two;
+            }
+            if (marker.empty() && (input[i] == '*' || input[i] == '_'))
+                marker.assign(1, input[i]);
+
+            if (marker.empty()) {
+                plain += input[i++];
+                continue;
+            }
+
+            bool is_bold = marker.size() == 2;
+            bool active = is_bold ? run_style.bold : run_style.italic;
+            bool has_closing = active ||
+                has_closing_marker(i + marker.size(), marker);
+
+            // Keep unmatched Markdown punctuation as ordinary text.
+            if (!has_closing) {
+                plain += marker;
+                i += marker.size();
+                continue;
+            }
+
+            flush();
+            if (is_bold) {
+                if (bold_styles.empty()) {
+                    bold_styles.push_back(run_style);
+                    run_style = markdown_style.bold_text;
+                }
+                else {
+                    run_style = bold_styles.back();
+                    bold_styles.pop_back();
+                }
+            }
+            else {
+                if (italic_styles.empty()) {
+                    italic_styles.push_back(run_style);
+                    run_style = markdown_style.italic_text;
+                }
+                else {
+                    run_style = italic_styles.back();
+                    italic_styles.pop_back();
+                }
+            }
+            i += marker.size();
+        }
+
+        flush();
+    };
+
+    auto split_table_row = [](const std::string& line) {
+        std::vector<std::string> cells;
+        size_t start = 0;
+        while (start < line.size() && line[start] == ' ')
+            ++start;
+        if (start < line.size() && line[start] == '|')
+            ++start;
+
+        while (start <= line.size()) {
+            size_t end = line.find('|', start);
+            if (end == std::string::npos)
+                end = line.size();
+
+            std::string cell = line.substr(start, end - start);
+            size_t left = cell.find_first_not_of(" \t");
+            size_t right = cell.find_last_not_of(" \t");
+            if (left == std::string::npos)
+                cell.clear();
+            else
+                cell = cell.substr(left, right - left + 1);
+            cells.push_back(cell);
+
+            if (end == line.size())
+                break;
+            start = end + 1;
+        }
+
+        size_t last = line.find_last_not_of(" \t");
+        if (last != std::string::npos && line[last] == '|' &&
+            !cells.empty() && cells.back().empty()) {
+            cells.pop_back();
+        }
+        return cells;
+    };
+
+    auto is_table_separator = [](const std::vector<std::string>& cells) {
+        if (cells.empty())
+            return false;
+        for (const auto& cell : cells) {
+            if (cell.size() < 3)
+                return false;
+            for (char ch : cell) {
+                if (ch != '-' && ch != ':')
+                    return false;
+            }
+        }
+        return true;
+    };
+
+    auto repeat = [](const std::string& value, int count) {
+        std::string result;
+        for (int i = 0; i < count; ++i)
+            result += value;
+        return result;
+    };
+
+    auto table_display_width = [&](const std::string& value) {
+        std::string visible;
+        for (size_t i = 0; i < value.size();) {
+            if (i + 1 < value.size() &&
+                ((value[i] == '*' && value[i + 1] == '*') ||
+                 (value[i] == '_' && value[i + 1] == '_'))) {
+                i += 2;
+                continue;
+            }
+            if (value[i] == '*' || value[i] == '_') {
+                ++i;
+                continue;
+            }
+
+            const MarkdownStyle::Replacement* replacement = nullptr;
+            for (const auto& candidate : markdown_style.replacements) {
+                if (!candidate.source.empty() &&
+                    value.compare(i, candidate.source.size(), candidate.source) == 0 &&
+                    (!replacement || candidate.source.size() > replacement->source.size())) {
+                    replacement = &candidate;
+                }
+            }
+            if (replacement) {
+                visible += replacement->text;
+                i += replacement->source.size();
+            }
+            else {
+                visible += value[i++];
+            }
+        }
+        return utf8_width(visible);
+    };
+
+    std::vector<std::string> lines;
+    size_t line_start = 0;
+    while (line_start <= md.size()) {
+        size_t line_end = md.find('\n', line_start);
+        if (line_end == std::string::npos)
+            line_end = md.size();
+        lines.push_back(md.substr(line_start, line_end - line_start));
+        if (line_end == md.size())
+            break;
+        line_start = line_end + 1;
+    }
+
+    auto is_fence = [](const std::string& line) {
+        size_t first = line.find_first_not_of(' ');
+        return first != std::string::npos &&
+               line.compare(first, 3, "```") == 0;
+    };
+
+    auto horizontal_rule_width = [](const std::string& line) {
+        size_t first = line.find_first_not_of(" \t");
+        size_t last = line.find_last_not_of(" \t");
+        if (first == std::string::npos || last - first + 1 < 3)
+            return 0;
+
+        char marker = line[first];
+        if (marker != '-' && marker != '*' && marker != '_')
+            return 0;
+        for (size_t i = first; i <= last; ++i) {
+            if (line[i] != marker)
+                return 0;
+        }
+        return static_cast<int>(last - first + 1);
+    };
+
+    for (size_t line_index = 0; line_index < lines.size(); ++line_index) {
+        const std::string& line = lines[line_index];
+
+        if (is_fence(line)) {
+            size_t code_index = line_index + 1;
+            bool first_code_line = true;
+            while (code_index < lines.size() && !is_fence(lines[code_index])) {
+                if (!first_code_line)
+                    edit->appendText("\n", markdown_style.code);
+                edit->appendText(lines[code_index], markdown_style.code);
+                first_code_line = false;
+                ++code_index;
+            }
+
+            // Consume the closing fence when present. An unclosed fence
+            // consumes the remainder of the Markdown document.
+            if (code_index < lines.size())
+                line_index = code_index;
+            else
+                line_index = lines.size() - 1;
+        }
+        else {
+        int marker_width = horizontal_rule_width(line);
+        if (marker_width > 0) {
+            int rule_width = edit->local.width();
+            if (rule_width <= 0)
+                rule_width = marker_width;
+            append_inline(repeat(markdown_style.horizontal_rule_char, rule_width),
+                markdown_style.horizontal_rule);
+        }
+        else {
+        std::vector<std::string> header_cells = split_table_row(line);
+        bool is_table = header_cells.size() >= 2 &&
+            line.find('|') != std::string::npos &&
+            line_index + 1 < lines.size() &&
+            is_table_separator(split_table_row(lines[line_index + 1]));
+
+        if (is_table) {
+            std::vector<std::vector<std::string>> rows;
+            rows.push_back(header_cells);
+            line_index += 2; // skip header and separator
+
+            while (line_index < lines.size() &&
+                   lines[line_index].find('|') != std::string::npos) {
+                rows.push_back(split_table_row(lines[line_index]));
+                ++line_index;
+            }
+            --line_index;
+
+            size_t column_count = 0;
+            for (const auto& row : rows)
+                column_count = std::max(column_count, row.size());
+
+            std::vector<int> column_width(column_count, 1);
+            for (const auto& row : rows) {
+                for (size_t column = 0; column < row.size(); ++column)
+                    column_width[column] = std::max(
+                        column_width[column], table_display_width(row[column]));
+            }
+
+            auto append_border = [&](const std::string& left,
+                                     const std::string& cross,
+                                     const std::string& right,
+                                     const RichText::Style& border_style) {
+                std::string border = left;
+                for (size_t column = 0; column < column_count; ++column) {
+                    border += repeat(MarkdownStyle::table_border[TableHorizontal],
+                        column_width[column] + 2);
+                    border += column + 1 == column_count ? right : cross;
+                }
+                append_inline(border, border_style);
+            };
+
+            auto append_row = [&](const std::vector<std::string>& row,
+                                  const RichText::Style& row_style) {
+                append_inline(MarkdownStyle::table_border[TableVertical],
+                    markdown_style.table_border_style);
+                for (size_t column = 0; column < column_count; ++column) {
+                    std::string cell = column < row.size() ? row[column] : "";
+                    int padding = column_width[column] - table_display_width(cell);
+                    append_inline(" " + cell + std::string(padding + 1, ' '),
+                        row_style);
+                    append_inline(MarkdownStyle::table_border[TableVertical],
+                        markdown_style.table_border_style);
+                }
+            };
+
+            append_border(MarkdownStyle::table_border[TableCornerTL],
+                MarkdownStyle::table_border[TableTopJoin],
+                MarkdownStyle::table_border[TableCornerTR],
+                markdown_style.table_border_style);
+            edit->appendText("\n", markdown_style.text);
+            append_row(rows[0], markdown_style.table_header);
+
+            if (rows.size() > 1) {
+                edit->appendText("\n", markdown_style.text);
+                append_border(MarkdownStyle::table_border[TableMiddleLeft],
+                    MarkdownStyle::table_border[TableCross],
+                    MarkdownStyle::table_border[TableMiddleRight],
+                    markdown_style.table_separator);
+                for (size_t row = 1; row < rows.size(); ++row) {
+                    edit->appendText("\n", markdown_style.text);
+                    append_row(rows[row], markdown_style.table_cell);
+                }
+            }
+
+            edit->appendText("\n", markdown_style.text);
+            append_border(MarkdownStyle::table_border[TableCornerBL],
+                MarkdownStyle::table_border[TableBottomJoin],
+                MarkdownStyle::table_border[TableCornerBR],
+                markdown_style.table_border_style);
+        }
+        else {
+            size_t first = line.find_first_not_of(' ');
+            int level = 0;
+            if (first != std::string::npos && line[first] == '>') {
+                size_t p = first;
+                int quote_level = 0;
+                while (p < line.size() && line[p] == '>') {
+                    ++p;
+                    ++quote_level;
+                    while (p < line.size() && line[p] == ' ')
+                        ++p;
+                }
+
+                for (int i = 0; i < quote_level; ++i)
+                    append_inline(markdown_style.quote_prefix,
+                        markdown_style.quote);
+                append_inline(line.substr(p), markdown_style.quote);
+            }
+            else if (first != std::string::npos) {
+                size_t p = first;
+                while (p < line.size() && line[p] == '#' && level < 6) {
+                    ++p;
+                    ++level;
+                }
+                if (level > 0 && (p == line.size() || line[p] != ' '))
+                    level = 0;
+                if (level > 0)
+                    ++p;
+
+                if (level > 0) {
+                    std::string heading_text = line.substr(p);
+                    append_inline(" " + heading_text + " ",
+                        markdown_style.heading[level - 1]);
+                    if (markdown_style.heading_rule_enabled[level - 1]) {
+                        edit->appendText("\n", markdown_style.text);
+                        int rule_width = utf8_width(" " + heading_text + " ");
+                        std::string rule;
+                        const std::string& rule_char =
+                            markdown_style.heading_rule_char[level - 1];
+                        for (int i = 0; i < rule_width; ++i)
+                            rule += rule_char;
+                        append_inline(rule,
+                            markdown_style.heading_rule[level - 1]);
+                    }
+                }
+                else {
+                    append_inline(line, markdown_style.text);
+                }
+            }
+            else if (!line.empty()) {
+                append_inline(line, markdown_style.text);
+            }
+        }
+        }
+        }
+
+        if (line_index + 1 < lines.size())
+            edit->appendText("\n", markdown_style.text);
+    }
 }
 
 /// <summary>

@@ -129,6 +129,85 @@ Object Edit
     TUI::Slider* chatArea = mgr.GetUI<TUI::Slider>("chatArea");
     TUI::Edit* inputBar = mgr.GetUI<TUI::Edit>("inputBar");
 
+    std::string md = u8R"(
+# RichText Markdown Demo
+
+This is a **bold** word and this is *italic* text.
+You can also combine **bold and *italic* text** in one sentence.
+
+## Status
+
+- Build: **success**
+- Tests: *running*
+- Coverage: **87%**
+
+---
+
+> This is a block quote.
+> It contains **formatted** text and UTF-8: 中文、🔥。
+
+### Code
+
+```cpp
+RichText::Style style;
+style.bold = true;
+edit->appendText("hello", style);
+```
+
+### Table
+
+| File | Status | Notes |
+|---|---|---|
+| main.cpp | **OK** | entry point |
+| zltui.cpp | *changed* | RichText support |
+| test.cpp | failed | needs review |
+
+#### extension
+
+Inline markers: **bold**, *italic*, __bold__, _italic_.
+Color extension: <fg=Red>error</fg>, <fg=Green>success</fg>, <bg=Blue>highlight</bg>.
+Unmatched markers stay visible: *unmatched and **also unmatched.
+)";
+
+    TUI::RichEdit* richEdit = new TUI::RichEdit(&mgr);
+    richEdit->local = { 0,17,70, 40 };
+
+    TUI::RichText::Style normal;
+    normal.fg_color = TUI::AnsiColor_White;
+
+    TUI::RichText::Style magenta;
+    magenta.fg_color = TUI::AnsiColor_Bright_Magenta;
+
+    TUI::RichText::Style bold;
+    bold.fg_color = TUI::AnsiColor_Bright_Yellow;
+    bold.bold = true;
+
+    TUI::RichText::Style italic;
+    italic.fg_color = TUI::AnsiColor_Bright_Cyan;
+    italic.italic = true;
+
+    TUI::RichText::Style underline;
+    underline.fg_color = TUI::AnsiColor_Bright_Green;
+    underline.underline = true;
+
+    TUI::RichText::Style highlighted;
+    highlighted.fg_color = TUI::AnsiColor_White;
+    highlighted.bg_color = TUI::AnsiColor_Red;
+    highlighted.bold = true;
+
+    richEdit->appendText("RichText styles: ", normal);
+    richEdit->appendText("magenta ", magenta);
+    richEdit->appendText("bold ", bold);
+    richEdit->appendText("italic ", italic);
+    richEdit->appendText("underline ", underline);
+    richEdit->appendText("highlighted\n", highlighted);
+    richEdit->appendText(u8"UTF-8: 中文 🔥 ", normal);
+    richEdit->appendText("wide characters\n", magenta);
+
+    TUI::Markdown(richEdit, md);
+    chatArea->AddChild(TUI::WinPtr(richEdit));
+
+
     std::filesystem::path current_path = ".";
 
     std::function<void()> populate_files_panel = [&]() {

@@ -271,6 +271,8 @@ struct RichText: Text
     int insert(int idx, const std::string text) override;
 
     void appendText(const std::string& _text, const Style &style);
+
+    static Style RichTextStyle(const Color& fg, const Color& bg = AnsiColor_Unused, bool bold = false, bool italic = false, bool underline = false);
 };
 
 struct Cell {
@@ -283,10 +285,7 @@ struct Cell {
     bool underline = false;
 
     void reset();
-    inline bool operator==(const Cell& o) const {
-        return size == o.size && bold == o.bold && italic == o.italic && underline == o.underline &&
-            fg_color == o.fg_color && bg_color == o.bg_color && content == o.content;
-    }
+    bool operator==(const Cell& o) const;
 };
 
 enum BorderStyle_
@@ -645,6 +644,40 @@ struct RichEdit : Slider, RichText
     std::function<bool(const TUI::Event &evt)> on_key;
     RichText::Style current_style;
 };
+
+struct MarkdownStyle {
+    RichText::Style text;
+    RichText::Style bold_text;
+    RichText::Style italic_text;
+    RichText::Style code;
+    RichText::Style horizontal_rule;
+    std::string horizontal_rule_char = u8"─";
+    RichText::Style quote;
+    std::string quote_prefix = u8"│ ";
+
+    RichText::Style table_header;
+    RichText::Style table_cell;
+    RichText::Style table_border_style;
+    RichText::Style table_separator;
+
+    RichText::Style heading[6];
+    RichText::Style heading_rule[6];
+    bool heading_rule_enabled[6] = { true, true, true, false, false, false };
+    std::string heading_rule_char[6] = { u8"═", u8"─", u8"─", u8"·", u8"·", u8"·" };
+
+    struct Replacement {
+        std::string source;
+        std::string text;
+        RichText::Style style;
+    };
+
+    std::vector<Replacement> replacements;
+
+    static std::string table_border[];
+    static MarkdownStyle DEFAULT;
+};
+
+void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& style = MarkdownStyle::DEFAULT);
 
 struct Mgr : Win
 {
