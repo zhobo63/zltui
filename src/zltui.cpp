@@ -890,9 +890,6 @@ void DrawBuffer::Text(const Point& pos, const TUI::Text& text, const Color& colo
             if (cell.size > 1) {
                 auto& next_cell = cells_[cur_y * width_ + cur_x + 1];
                 next_cell.content = "";
-                //if (is_sel) {
-                //    next_cell.bg_color = text.color_selected;
-                //}
             }
         }
     }
@@ -940,10 +937,6 @@ void DrawBuffer::Text(const Point& pos, const TUI::RichText& text)
         if (cell.size > 1) {
             auto& next_cell = cells_[cur_y * width_ + cur_x + 1];
             next_cell.content = "";
-            //if (is_selected)
-            //    next_cell.bg_color = text.color_selected;
-            //else if (style.bg_color.ansi != AnsiColor_Unused)
-            //    next_cell.bg_color = style.bg_color;
         }
     }
 }
@@ -1527,13 +1520,6 @@ void Terminal::Render()
         }
         for (int x = 0; x < cur_buf.width_; ++x) {
             auto& cur_cell = cur_buf.cells_[yw + x];
-            //auto& pre_cell = pre_buf.cells_[yw + x];
-
-            //if (cur_cell == pre_cell)
-            //    continue;
-            //if (cur_x != x || cur_y != y) {
-            //    out += CursorMove(x, y);
-            //}
             if (cur_y != y) {
                 out += CursorMove(x, y);
             }
@@ -3746,29 +3732,13 @@ MarkdownStyle MarkdownStyle::DEFAULT = [] {
     for (int i = 0; i < 6; ++i)
         result.heading_rule[i] = result.heading[i];
 
-    auto replacement = [](const std::string& source,
-                          const Color& color,
-                          bool bold = true) {
-        MarkdownStyle::Replacement value;
-        value.source = source;
-        value.text = source;
-        value.style.fg_color = color;
-        value.style.bold = bold;
-        return value;
-    };
-
-    result.replacements.push_back(replacement(u8"✅", AnsiColor_Bright_Green));
-    result.replacements.push_back(replacement(u8"❌", AnsiColor_Bright_Red));
-    result.replacements.push_back(replacement(u8"⚠️", AnsiColor_Bright_Yellow));
-    result.replacements.push_back(replacement(u8"🔥", AnsiColor_Bright_Red));
-    result.replacements.push_back(replacement(u8"💡", AnsiColor_Bright_Cyan));
-
-    MarkdownStyle::Replacement bullet;
-    bullet.source = "- ";
-    bullet.text = u8"🔘 ";
-    bullet.style.fg_color = AnsiColor_Bright_Cyan;
-    bullet.style.bold = true;
+    //·•●⬤
+    MarkdownStyle::Replacement bullet = { "- " , u8"● " , RichText::RichTextStyle(AnsiColor_Bright_White) };
+    MarkdownStyle::Replacement check = { "[x]" , u8"✅" , RichText::RichTextStyle(AnsiColor_Bright_White) };
+    MarkdownStyle::Replacement uncheck = { "[ ]" , u8"🔳" , RichText::RichTextStyle(AnsiColor_Bright_White) };
     result.replacements.push_back(bullet);
+    result.replacements.push_back(check);
+    result.replacements.push_back(uncheck);
 
     return result;
 }();

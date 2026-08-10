@@ -67,7 +67,7 @@ Object Slider
 {
     Name chatArea
     Rect 31 1 100 100
-    DrawBorder true
+    DrawBorder false
     BorderStyle Single
     Title Output
     Dock Right|Down 25 2 100 100
@@ -140,6 +140,7 @@ You can also combine **bold and *italic* text** in one sentence.
 - Build: **success**
 - Tests: *running*
 - Coverage: **87%**
+  - Performance
 
 ---
 
@@ -167,33 +168,19 @@ edit->appendText("hello", style);
 Inline markers: **bold**, *italic*, __bold__, _italic_.
 Color extension: <fg=Red>error</fg>, <fg=Green>success</fg>, <bg=Blue>highlight</bg>.
 Unmatched markers stay visible: *unmatched and **also unmatched.
+[ ] uncheck
+[x] check
 )";
 
     TUI::RichEdit* richEdit = new TUI::RichEdit(&mgr);
     richEdit->local = { 0,17,70, 40 };
 
-    TUI::RichText::Style normal;
-    normal.fg_color = TUI::AnsiColor_White;
-
-    TUI::RichText::Style magenta;
-    magenta.fg_color = TUI::AnsiColor_Bright_Magenta;
-
-    TUI::RichText::Style bold;
-    bold.fg_color = TUI::AnsiColor_Bright_Yellow;
-    bold.bold = true;
-
-    TUI::RichText::Style italic;
-    italic.fg_color = TUI::AnsiColor_Bright_Cyan;
-    italic.italic = true;
-
-    TUI::RichText::Style underline;
-    underline.fg_color = TUI::AnsiColor_Bright_Green;
-    underline.underline = true;
-
-    TUI::RichText::Style highlighted;
-    highlighted.fg_color = TUI::AnsiColor_White;
-    highlighted.bg_color = TUI::AnsiColor_Red;
-    highlighted.bold = true;
+    TUI::RichText::Style normal = TUI::RichText::RichTextStyle(TUI::AnsiColor_White);
+    TUI::RichText::Style magenta = TUI::RichText::RichTextStyle(TUI::AnsiColor_Bright_Magenta);
+    TUI::RichText::Style bold = TUI::RichText::RichTextStyle(TUI::AnsiColor_Bright_Yellow, TUI::AnsiColor_Unused, true);
+    TUI::RichText::Style italic = TUI::RichText::RichTextStyle(TUI::AnsiColor_Bright_Cyan, TUI::AnsiColor_Unused, false, true);
+    TUI::RichText::Style underline = TUI::RichText::RichTextStyle(TUI::AnsiColor_Bright_Green, TUI::AnsiColor_Unused, false, false, true);
+    TUI::RichText::Style highlighted = TUI::RichText::RichTextStyle(TUI::AnsiColor_White, TUI::AnsiColor_Red, true);
 
     richEdit->appendText("RichText styles: ", normal);
     richEdit->appendText("magenta ", magenta);
