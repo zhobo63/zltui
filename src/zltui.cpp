@@ -3443,7 +3443,7 @@ bool Edit::ParseCmd(const std::string& cmd, EditLine& el)
     if (eqi(cmd, "Text")) {
         setText(ParseText(el.tok_line()));
     }
-    else if (Win::ParseCmd(cmd, el)) {
+    else if (Slider::ParseCmd(cmd, el)) {
     }
     else {
         ret = false;
@@ -3533,6 +3533,115 @@ Win* Edit::Clone() const
     return ob;
 }
 
+Edit* GetEdit(Win* ob, const std::string& text, std::function<bool(const TUI::Event& evt)> func, const char* find)
+{
+    Edit* ed = dynamic_cast<Edit*>(ob);
+    if (find) {
+        ed = ob->GetUI<Edit>(find);
+    }
+    if (!ed)
+        return ed;
+    ed->setText(text);
+    ed->on_key = func;
+    return ed;
+}
+
+/// <summary>
+/// LabelEdit
+/// </summary>
+
+LabelEdit::LabelEdit(Mgr* mgr) : Edit(mgr)
+{
+    is_scroll_y = false;
+    draw_border = true;
+    border_style = BorderStyle_None;
+    bg_color_hover = COLOR_HOVER;
+}
+
+bool LabelEdit::ParseCmd(const std::string& cmd, EditLine& el)
+{
+    bool ret = true;
+    if (eqi(cmd, "Label")) {
+        label = ParseText(el.tok_line());
+    }
+    else if (eqi(cmd, "LabelWidth")) {
+        label_width = el.tok_int();
+    }
+    else if (eqi(cmd, "ColorHover")) {
+        bg_color_hover = Color::Parse(el.tok());
+    }
+    else if (Edit::ParseCmd(cmd, el)) {
+    }
+    else {
+        ret = false;
+    }
+    return ret;
+}
+void LabelEdit::CalRect(Win* parent)
+{
+    Edit::CalRect(parent);
+    clip.x += label_width;
+}
+void LabelEdit::PaintText(DrawBuffer& drawbuf)
+{
+    {
+
+        int tx = clip.x - label_width;
+        int ty = clip.y;
+        drawbuf.Text(label, { tx, ty }, fg_color);
+    }
+    drawbuf.PushClip(clip);
+    if (!text.empty()) {
+        int tx = clip.x - scroll_value.x;
+        int ty = clip.y - scroll_value.y;
+        drawbuf.Text({ tx, ty }, *this, fg_color);
+    }
+    if (mgr->notify_ == this) {
+        int cx = clip.x + cursor.x - scroll_value.x;
+        int cy = clip.y + cursor.y - scroll_value.y;
+        drawbuf.SetColor({ cx,cy }, COLOR_CURSOR, COLOR_CURSOR_BG);
+    }
+    drawbuf.PopClip();
+}
+void LabelEdit::PaintBorder(DrawBuffer& drawbuf)
+{
+    Color bg = bg_color;
+    if (mgr->hover_ == this) {
+        bg = bg_color_hover;
+    }
+    if (draw_border) {
+        drawbuf.Border({ screen.x + label_width, screen.y, screen.x2, screen.y2 }, bg, border_style, fg_color);
+    }
+}
+
+void LabelEdit::Copy(const Win* ob)
+{
+    Edit::Copy(ob);
+    const LabelEdit* other = dynamic_cast<const LabelEdit*>(ob);
+    label = other->label;
+    label_width = other->label_width;
+}
+
+Win* LabelEdit::Clone() const
+{
+    LabelEdit* ob = new LabelEdit(mgr);
+    ob->Copy(this);
+    return ob;
+}
+
+LabelEdit* GetLabelEdit(Win* ob, const std::string& text, std::function<bool(const TUI::Event& evt)> func, const char* find)
+{
+    LabelEdit* ed = dynamic_cast<LabelEdit*>(ob);
+    if (find) {
+        ed = ob->GetUI<LabelEdit>(find);
+    }
+    if (!ed)
+        return ed;
+    ed->setText(text);
+    ed->on_key = func;
+    return ed;
+}
+
 /// <summary>
 /// RichEdit
 /// </summary>
@@ -3600,7 +3709,7 @@ bool RichEdit::ParseCmd(const std::string& cmd, EditLine& el)
         appendText(ParseText(el.tok_line()), current_style);
         return true;
     }
-    return Win::ParseCmd(cmd, el);
+    return Slider::ParseCmd(cmd, el);
 }
 
 Point RichEdit::GetTextSize() const
@@ -4221,6 +4330,9 @@ WinPtr Mgr::Create(std::string csid)
     }
     else if (eqi(csid, "Edit")) {
         ob = new Edit(this);
+    }
+    else if (eqi(csid, "LabelEdit")) {
+        ob = new LabelEdit(this);
     }
     else if (eqi(csid, "RichEdit")) {
         ob = new RichEdit(this);

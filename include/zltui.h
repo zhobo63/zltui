@@ -612,7 +612,7 @@ struct Edit : Slider, Text
     void CalRect(Win* parent) override;
     Point GetTextSize() const override;
     void Paint(DrawBuffer& drawbuf) override;
-    void PaintText(DrawBuffer& drawbuf);
+    virtual void PaintText(DrawBuffer& drawbuf);
     void setText(const std::string& _text);
     void Event(const TUI::Event& ev) override;
     void Copy(const Win* ob) override;
@@ -624,6 +624,26 @@ struct Edit : Slider, Text
 
     std::function<bool(const TUI::Event &evt)> on_key;
 };
+
+Edit* GetEdit(Win* ob, const std::string& text, std::function<bool(const TUI::Event& evt)> func, const char* find);
+
+struct LabelEdit : Edit
+{
+    LabelEdit(Mgr* mgr);
+
+    bool ParseCmd(const std::string& cmd, EditLine& el) override;
+    void CalRect(Win* parent) override;
+    void PaintText(DrawBuffer& drawbuf) override;
+    void PaintBorder(DrawBuffer& drawbuf) override;
+    void Copy(const Win* ob) override;
+    Win* Clone() const override;
+
+    std::string label = "";
+    int label_width = 16;
+    Color bg_color_hover = COLOR_HOVER;
+};
+
+LabelEdit* GetLabelEdit(Win* ob, const std::string& text, std::function<bool(const TUI::Event& evt)> func, const char* find);
 
 struct RichEdit : Slider, RichText
 {
