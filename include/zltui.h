@@ -529,7 +529,9 @@ struct Win
     std::vector<WinPtr> child;
 
     Mgr* mgr = nullptr;
-    std::function<void()> on_click;
+    
+    using fn_click = std::function<void()>;
+    fn_click on_click;
 
     static Color COLOR_BG;
     static Color COLOR_HOVER;
@@ -569,6 +571,8 @@ struct Button : Label
     Color bg_color_down = COLOR_DOWN;
 };
 
+Button* GetButton(Win* ob, Win::fn_click click, const char* find = nullptr);
+
 struct Check : Button
 {
     Check(Mgr* mgr);
@@ -578,8 +582,12 @@ struct Check : Button
     Win* Clone() const override;
 
     bool checked = false;
-    std::function<void(bool)> on_check;
+
+    using fn_check = std::function<void(bool)>;
+    fn_check on_check;
 };
+
+Check* GetCheck(Win* ob, bool value, Check::fn_check check, const char* find = nullptr);
 
 struct Slider : Win
 {
@@ -622,10 +630,11 @@ struct Edit : Slider, Text
     int drag_start = -1;  // character index where drag selection started
     bool readonly = false;
 
-    std::function<bool(const TUI::Event &evt)> on_key;
+    using fn_edit = std::function<bool(const TUI::Event& evt)>;
+    fn_edit on_key;
 };
 
-Edit* GetEdit(Win* ob, const std::string& text, std::function<bool(const TUI::Event& evt)> func, const char* find);
+Edit* GetEdit(Win* ob, const std::string& text, Edit::fn_edit edit, const char* find = nullptr);
 
 struct LabelEdit : Edit
 {
@@ -643,7 +652,7 @@ struct LabelEdit : Edit
     Color bg_color_hover = COLOR_HOVER;
 };
 
-LabelEdit* GetLabelEdit(Win* ob, const std::string& text, std::function<bool(const TUI::Event& evt)> func, const char* find);
+LabelEdit* GetLabelEdit(Win* ob, const std::string& text, Edit::fn_edit edit, const char* find = nullptr);
 
 struct RichEdit : Slider, RichText
 {
@@ -663,7 +672,8 @@ struct RichEdit : Slider, RichText
     int drag_start = -1;
     bool readonly = false;
 
-    std::function<bool(const TUI::Event &evt)> on_key;
+    using fn_edit = std::function<bool(const TUI::Event& evt)>;
+    fn_edit on_key;
     RichText::Style current_style;
 };
 

@@ -3007,6 +3007,18 @@ Win* Button::Clone() const
     return ob;
 }
 
+Button* GetButton(Win* ob, std::function<void()> click, const char* find)
+{
+    Button* btn = dynamic_cast<Button*> (ob);
+    if (find) {
+        btn = ob->GetUI<Button>(find);
+    }
+    if (!btn)
+        return btn;
+    btn->on_click = click;
+    return btn;
+}
+
 /// <summary>
 /// Check
 /// </summary>
@@ -3056,6 +3068,18 @@ Win* Check::Clone() const
     Check* ob = new Check(mgr);
     ob->Copy(this);
     return ob;
+}
+
+Check* GetCheck(Win* ob, bool value, Check::fn_check check, const char* find)
+{
+    Check* chk = dynamic_cast<Check*>(ob);
+    if (find) {
+        chk = ob->GetUI<Check>(find);
+    }
+    if (!chk) return chk;
+    chk->checked = value;
+    chk->on_check = check;
+    return chk;
 }
 
 /// <summary>
@@ -3585,7 +3609,6 @@ void LabelEdit::CalRect(Win* parent)
 void LabelEdit::PaintText(DrawBuffer& drawbuf)
 {
     {
-
         int tx = clip.x - label_width;
         int ty = clip.y;
         drawbuf.Text(label, { tx, ty }, fg_color);
