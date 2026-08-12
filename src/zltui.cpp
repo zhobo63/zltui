@@ -2297,10 +2297,10 @@ Dock_ ParseDock(const std::string& tok)
         if (eqi(s, "Right"))      return Dock_Right;
         if (eqi(s, "Down"))       return Dock_Down;
         if (eqi(s, "All"))        return Dock_All;
-        if (eqi(s, "Top_Pane"))   return Dock_Top_Pane;
-        if (eqi(s, "Left_Pane"))  return Dock_Left_Pane;
-        if (eqi(s, "Right_Pane")) return Dock_Right_Pane;
-        if (eqi(s, "Down_Pane"))  return Dock_Down_Pane;
+        if (eqi(s, "TopPane"))   return Dock_Top_Pane;
+        if (eqi(s, "LeftPane"))  return Dock_Left_Pane;
+        if (eqi(s, "RightPane")) return Dock_Right_Pane;
+        if (eqi(s, "DownPane"))  return Dock_Down_Pane;
         return Dock_None;
     };
 
@@ -2526,10 +2526,12 @@ void Win::CalRect(Win* parent)
         local.y2 = (ph - 1) * dock_.dock.y2 / 100 + dock_.offset.y2;
     }
     if (dock_.mode & Dock_Right_Pane) {
-        local.y = local.y2 - lw;
+        local.x2 = (pw - 1) * dock_.dock.x2 / 100 + dock_.offset.x2;
+        local.x = local.x2 - lw;
     }
     if (dock_.mode & Dock_Down_Pane) {
-        local.x = local.x2 - lh;
+        local.y2 = (ph - 1) * dock_.dock.y2 / 100 + dock_.offset.y2;
+        local.y = local.y2 - lh;
     }
 
     auto textSize = GetTextSize();
@@ -3007,18 +3009,6 @@ Win* Button::Clone() const
     return ob;
 }
 
-Button* GetButton(Win* ob, std::function<void()> click, const char* find)
-{
-    Button* btn = dynamic_cast<Button*> (ob);
-    if (find) {
-        btn = ob->GetUI<Button>(find);
-    }
-    if (!btn)
-        return btn;
-    btn->on_click = click;
-    return btn;
-}
-
 /// <summary>
 /// Check
 /// </summary>
@@ -3068,18 +3058,6 @@ Win* Check::Clone() const
     Check* ob = new Check(mgr);
     ob->Copy(this);
     return ob;
-}
-
-Check* GetCheck(Win* ob, bool value, Check::fn_check check, const char* find)
-{
-    Check* chk = dynamic_cast<Check*>(ob);
-    if (find) {
-        chk = ob->GetUI<Check>(find);
-    }
-    if (!chk) return chk;
-    chk->checked = value;
-    chk->on_check = check;
-    return chk;
 }
 
 /// <summary>
@@ -3301,7 +3279,7 @@ Win* Slider::Clone() const
 /// Edit
 ///
 
-static void TextEvent(
+static bool TextEvent(
     Slider& slider,
     Text& text,
     Point& cursor,
@@ -3310,9 +3288,10 @@ static void TextEvent(
     std::function<bool(const TUI::Event&)>& on_key,
     const TUI::Event& ev)
 {
+    bool change = false;
     Mgr* mgr = slider.mgr;
     if (!mgr || mgr->notify_ != &slider)
-        return;
+        return change;
 
     if (ev.type == EventType_Mouse) {
         Point pt = { ev.x, ev.y };
@@ -3322,7 +3301,7 @@ static void TextEvent(
             if (drag_start >= 0 && !slider.is_down)
                 drag_start = -1;
             mgr->is_dirty = true;
-            return;
+            return change;
         }
 
         int lx = ev.x - slider.clip.x + slider.scroll_value.x;
@@ -3335,7 +3314,7 @@ static void TextEvent(
             text.selected.end = std::max(drag_start, idx);
             cursor = text.pos_of(idx);
             mgr->is_dirty = true;
-            return;
+            return change;
         }
 
         if (is_first_down)
@@ -3357,7 +3336,7 @@ static void TextEvent(
             slider.clip.y + cursor.y - slider.scroll_value.y
         };
         mgr->is_dirty = true;
-        return;
+        return change;
     }
 
     if (ev.type == EventType_Paste) {
@@ -3367,22 +3346,23 @@ static void TextEvent(
         text.selected.unselect();
         cursor = text.pos_of(idx);
         mgr->is_dirty = true;
-        return;
+        return true;
     }
 
     if (ev.type != EventType_Key)
-        return;
+        return change;
 
     int idx = text.cur_idx_of(cursor);
     bool handled = true;
 
     if (on_key && on_key(ev))
-        return;
+        return change;
 
     if (ev.vkey == VK_BACK) {
         if (!readonly) {
             idx = text.backspace(idx);
             cursor = text.pos_of(idx);
+            change = true;
         }
     }
     else if (ev.vkey == VK_RETURN) {
@@ -3390,12 +3370,14 @@ static void TextEvent(
             Point newline_pos = text.pos_of(idx);
             text.enter(idx);
             cursor = { 0, newline_pos.y + 1 };
+            change = true;
         }
     }
     else if (ev.vkey == VK_DELETE) {
         if (!readonly) {
             idx = text.del(idx);
             cursor = text.pos_of(idx);
+            change = true;
         }
     }
     else if (ev.vkey == VK_LEFT || ev.vkey == VK_RIGHT ||
@@ -3441,6 +3423,7 @@ static void TextEvent(
             idx = text.insert(idx, value);
             text.selected.unselect();
             cursor = text.pos_of(idx);
+            change = true;
         }
     }
     else {
@@ -3454,6 +3437,7 @@ static void TextEvent(
         };
         mgr->is_dirty = true;
     }
+    return change;
 }
 
 Edit::Edit(Mgr* mgr) :Slider(mgr) {
@@ -3524,12 +3508,19 @@ void Edit::setText(const std::string& _text)
     selected.unselect();
     cursor = { 0,0 };
     mgr->is_dirty = true;
+    if (on_edit) {
+        on_edit(this, text);
+    }
 }
 
 void Edit::Event(const TUI::Event& ev)
 {
     Slider::Event(ev);
-    TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev);
+    if (TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev)) {
+        if (on_edit) {
+            on_edit(this, text);
+        }
+    }
 }
 
 void Edit::Copy(const Win* ob)
@@ -3555,19 +3546,6 @@ Win* Edit::Clone() const
     Edit* ob = new Edit(mgr);
     ob->Copy(this);
     return ob;
-}
-
-Edit* GetEdit(Win* ob, const std::string& text, std::function<bool(const TUI::Event& evt)> func, const char* find)
-{
-    Edit* ed = dynamic_cast<Edit*>(ob);
-    if (find) {
-        ed = ob->GetUI<Edit>(find);
-    }
-    if (!ed)
-        return ed;
-    ed->setText(text);
-    ed->on_key = func;
-    return ed;
 }
 
 /// <summary>
@@ -3650,19 +3628,6 @@ Win* LabelEdit::Clone() const
     LabelEdit* ob = new LabelEdit(mgr);
     ob->Copy(this);
     return ob;
-}
-
-LabelEdit* GetLabelEdit(Win* ob, const std::string& text, std::function<bool(const TUI::Event& evt)> func, const char* find)
-{
-    LabelEdit* ed = dynamic_cast<LabelEdit*>(ob);
-    if (find) {
-        ed = ob->GetUI<LabelEdit>(find);
-    }
-    if (!ed)
-        return ed;
-    ed->setText(text);
-    ed->on_key = func;
-    return ed;
 }
 
 /// <summary>
@@ -3788,6 +3753,9 @@ void RichEdit::setText(const std::string& _text)
     RichText::setText(_text, local.width());
     selected.unselect();
     cursor = { 0, 0 };
+    if (on_edit) {
+        on_edit(this, text);
+    }
     if (mgr)
         mgr->is_dirty = true;
 }
@@ -3795,7 +3763,11 @@ void RichEdit::setText(const std::string& _text)
 void RichEdit::Event(const TUI::Event& ev)
 {
     Slider::Event(ev);
-    TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev);
+    if (TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev)) {
+        if (on_edit) {
+            on_edit(this, text);
+        }
+    }
 }
 
 void RichEdit::Copy(const Win* ob)
@@ -4445,6 +4417,60 @@ void Mgr::Paint(DrawBuffer& drawbuf)
 {
     Win::Paint(drawbuf);
     is_dirty = false;
+}
+
+/// <summary>
+/// 輔助
+/// </summary>
+
+Button* GetButton(Win* ob, std::function<void()> click, const char* find)
+{
+    Button* btn = dynamic_cast<Button*> (ob);
+    if (find) {
+        btn = ob->GetUI<Button>(find);
+    }
+    if (!btn)
+        return btn;
+    btn->on_click = click;
+    return btn;
+}
+
+Check* GetCheck(Win* ob, bool value, Check::fn_check check, const char* find)
+{
+    Check* chk = dynamic_cast<Check*>(ob);
+    if (find) {
+        chk = ob->GetUI<Check>(find);
+    }
+    if (!chk) return chk;
+    chk->checked = value;
+    chk->on_check = check;
+    return chk;
+}
+
+Edit* GetEdit(Win* ob, const std::string& text, Edit::fn_edit func, const char* find)
+{
+    Edit* ed = dynamic_cast<Edit*>(ob);
+    if (find) {
+        ed = ob->GetUI<Edit>(find);
+    }
+    if (!ed)
+        return ed;
+    ed->setText(text);
+    ed->on_edit = func;
+    return ed;
+}
+
+LabelEdit* GetLabelEdit(Win* ob, const std::string& text, Edit::fn_edit func, const char* find)
+{
+    LabelEdit* ed = dynamic_cast<LabelEdit*>(ob);
+    if (find) {
+        ed = ob->GetUI<LabelEdit>(find);
+    }
+    if (!ed)
+        return ed;
+    ed->setText(text);
+    ed->on_edit = func;
+    return ed;
 }
 
 NAMESPACE_END

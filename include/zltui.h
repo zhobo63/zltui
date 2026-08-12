@@ -571,8 +571,6 @@ struct Button : Label
     Color bg_color_down = COLOR_DOWN;
 };
 
-Button* GetButton(Win* ob, Win::fn_click click, const char* find = nullptr);
-
 struct Check : Button
 {
     Check(Mgr* mgr);
@@ -586,8 +584,6 @@ struct Check : Button
     using fn_check = std::function<void(bool)>;
     fn_check on_check;
 };
-
-Check* GetCheck(Win* ob, bool value, Check::fn_check check, const char* find = nullptr);
 
 struct Slider : Win
 {
@@ -630,11 +626,12 @@ struct Edit : Slider, Text
     int drag_start = -1;  // character index where drag selection started
     bool readonly = false;
 
-    using fn_edit = std::function<bool(const TUI::Event& evt)>;
-    fn_edit on_key;
+    using fn_key = std::function<bool(const TUI::Event& evt)>;
+    using fn_edit = std::function<bool(Edit* edit, const std::string& text)>;
+    
+    fn_key on_key;
+    fn_edit on_edit;
 };
-
-Edit* GetEdit(Win* ob, const std::string& text, Edit::fn_edit edit, const char* find = nullptr);
 
 struct LabelEdit : Edit
 {
@@ -651,8 +648,6 @@ struct LabelEdit : Edit
     int label_width = 16;
     Color bg_color_hover = COLOR_HOVER;
 };
-
-LabelEdit* GetLabelEdit(Win* ob, const std::string& text, Edit::fn_edit edit, const char* find = nullptr);
 
 struct RichEdit : Slider, RichText
 {
@@ -672,8 +667,10 @@ struct RichEdit : Slider, RichText
     int drag_start = -1;
     bool readonly = false;
 
-    using fn_edit = std::function<bool(const TUI::Event& evt)>;
-    fn_edit on_key;
+    using fn_key = std::function<bool(const TUI::Event& evt)>;
+    using fn_edit = std::function<bool(RichEdit* edit, const std::string& text)>;
+    fn_key on_key;
+    fn_edit on_edit;
     RichText::Style current_style;
 };
 
@@ -725,5 +722,11 @@ struct Mgr : Win
     Win* hover_slider_ = nullptr;
     Point cursor;
 };
+
+Button* GetButton(Win* ob, Win::fn_click click, const char* find = nullptr);
+Check* GetCheck(Win* ob, bool value, Check::fn_check check, const char* find = nullptr);
+Edit* GetEdit(Win* ob, const std::string& text, Edit::fn_edit edit, const char* find = nullptr);
+LabelEdit* GetLabelEdit(Win* ob, const std::string& text, Edit::fn_edit edit, const char* find = nullptr);
+
 
 NAMESPACE_END
