@@ -491,22 +491,28 @@ struct Win
     virtual void Paint(DrawBuffer& drawbuf);
     virtual void PaintBorder(DrawBuffer& drawbuf);
     virtual void PaintChild(DrawBuffer& drawbuf);
-    virtual Win* GetNotify(const Point& pt);
-    virtual Win* GetSlider(const Point& pt);
-    virtual Win* GetUI(const std::string &name);
+    virtual WinPtr GetNotify(const Point& pt);
+    virtual WinPtr GetSlider(const Point& pt);
+    virtual WinPtr GetUI(const std::string &name);
     virtual void Copy(const Win* ob);
-    virtual Win* Clone() const;
-
-    template<class T>
-    T* GetUI(const char *name) {
-        return dynamic_cast<T*>(GetUI(std::string(name)));
-    }
+    virtual WinPtr Clone() const;
     virtual void AddChild(WinPtr obj);
     virtual void Click() { if (on_click) on_click(); }
     virtual bool IsSlider() const { return false; }
     virtual void Event(const Event& ev) {}
     virtual Point GetClipPos() const;
     virtual Point GetTextSize() const { return { 0,0 }; }
+
+    template<class T>
+    std::shared_ptr<T> GetUI(const char* name) {
+        return std::dynamic_pointer_cast<T>(GetUI(std::string(name)));
+    }
+    template<class T>
+    std::shared_ptr<T> Create() {
+        auto ptr = WinPtr(new T(mgr));
+        AddChild(ptr);
+        return std::dynamic_pointer_cast<T>(ptr);
+    }
 
     std::string name = "";
     std::string title = "";
@@ -515,6 +521,7 @@ struct Win
     bool is_notify = false;
     bool is_down = false;
     bool draw_border = false;
+    bool is_cloneable = true;
     BorderStyle_ border_style = BorderStyle_Round;
     Color bg_color = COLOR_BG;
     Color fg_color = AnsiColor_White;
@@ -557,10 +564,12 @@ struct Label : Win, Text
     Point GetTextSize() const override;
     void setText(const std::string& _text);
     void Copy(const Win* ob) override;
-    Win* Clone() const override;
+    WinPtr Clone() const override;
 
     Align_ text_algn = Align_Start;
 };
+
+using LabelPtr = std::shared_ptr<Label>;
 
 struct Button : Label
 {
@@ -568,11 +577,13 @@ struct Button : Label
     bool ParseCmd(const std::string& cmd, EditLine& el) override;
     void PaintBorder(DrawBuffer& drawbuf) override;
     void Copy(const Win* ob) override;
-    Win* Clone() const override;
+    WinPtr Clone() const override;
 
     Color bg_color_hover = COLOR_HOVER;
     Color bg_color_down = COLOR_DOWN;
 };
+
+using ButtonPtr = std::shared_ptr<Button>;
 
 struct Check : Button
 {
@@ -581,7 +592,7 @@ struct Check : Button
     void PaintText(DrawBuffer& drawbuf) override;
     void Click() override;
     void Copy(const Win* ob) override;
-    Win* Clone() const override;
+    WinPtr Clone() const override;
 
     bool checked = false;
     Color fg_color_checked = COLOR_CHECKED;
@@ -589,6 +600,10 @@ struct Check : Button
     using fn_check = std::function<void(bool)>;
     fn_check on_check;
 };
+
+using CheckPtr = std::shared_ptr<Check>;
+
+//TODO Combo Popup
 
 struct Slider : Win
 {
@@ -602,7 +617,7 @@ struct Slider : Win
     Point GetClipPos() const override;
     virtual void PaintScrollBar(DrawBuffer& drawbuf);
     void Copy(const Win* ob) override;
-    Win* Clone() const override;
+    WinPtr Clone() const override;
 
     bool is_scroll_x = false;
     bool is_scroll_y = true;
@@ -612,6 +627,8 @@ struct Slider : Win
     Color color_track = COLOR_TRACK;
     Color color_thumb = COLOR_THUMB;
 };
+
+using SliderPtr = std::shared_ptr<Slider>;
 
 struct Edit : Slider, Text
 {
@@ -625,18 +642,20 @@ struct Edit : Slider, Text
     void setText(const std::string& _text);
     void Event(const TUI::Event& ev) override;
     void Copy(const Win* ob) override;
-    Win* Clone() const override;
+    WinPtr Clone() const override;
 
     Point cursor;
     int drag_start = -1;  // character index where drag selection started
     bool readonly = false;
 
     using fn_key = std::function<bool(const TUI::Event& evt)>;
-    using fn_edit = std::function<bool(Edit* edit, const std::string& text)>;
+    using fn_edit = std::function<const std::string& (Edit* edit, const std::string& text)>;
     
     fn_key on_key;
     fn_edit on_edit;
 };
+
+using EditPtr = std::shared_ptr<Edit>;
 
 struct LabelEdit : Edit
 {
@@ -647,13 +666,28 @@ struct LabelEdit : Edit
     void PaintText(DrawBuffer& drawbuf) override;
     void PaintBorder(DrawBuffer& drawbuf) override;
     void Copy(const Win* ob) override;
-    Win* Clone() const override;
+    WinPtr Clone() const override;
+
+    void Input(const std::string& label, std::string& value, fn_edit onedit);
+    void Input(const std::string& label, uint32_t& value, fn_edit onedit);
+    void Button(const std::string& label, std::string& value, fn_click onclick);
+    void Check(const std::string& label, bool& value, Check::fn_check oncheck, const char* check_text[2] = nullptr);
+
+    enum Type_ {
+        Type_Button,
+        Type_Edit,
+        Type_Check,
+    };
 
     std::string label = "";
     int label_width = 16;
     Color bg_color_hover = COLOR_HOVER;
     Color fg_color_label = COLOR_LABEL;
+
+    std::vector<WinPtr> controls;
 };
+
+using LabelEditPtr = std::shared_ptr<LabelEdit>;
 
 struct RichEdit : Slider, RichText
 {
@@ -667,18 +701,20 @@ struct RichEdit : Slider, RichText
     void setText(const std::string& _text);
     void Event(const TUI::Event& ev) override;
     void Copy(const Win* ob) override;
-    Win* Clone() const override;
+    WinPtr Clone() const override;
 
     Point cursor;
     int drag_start = -1;
     bool readonly = false;
 
     using fn_key = std::function<bool(const TUI::Event& evt)>;
-    using fn_edit = std::function<bool(RichEdit* edit, const std::string& text)>;
+    using fn_edit = std::function<const std::string& (RichEdit* edit, const std::string& text)>;
     fn_key on_key;
     fn_edit on_edit;
     RichText::Style current_style;
 };
+
+using RichEditPtr = std::shared_ptr<RichEdit>;
 
 struct MarkdownStyle {
     RichText::Style text;
@@ -723,16 +759,18 @@ struct Mgr : Win
     void Paint(DrawBuffer& drawbuf) override;
 
     bool is_dirty = true;
-    Win* notify_ = nullptr;     //input focus
-    Win* hover_ = nullptr;
-    Win* hover_slider_ = nullptr;
+    WinPtr notify_ = nullptr;     //input focus
+    WinPtr hover_ = nullptr;
+    WinPtr hover_slider_ = nullptr;
     Point cursor;
 };
 
-Button* GetButton(Win* ob, Win::fn_click click, const char* find = nullptr);
-Check* GetCheck(Win* ob, bool value, Check::fn_check check, const char* find = nullptr);
-Edit* GetEdit(Win* ob, const std::string& text, Edit::fn_edit edit, const char* find = nullptr);
-LabelEdit* GetLabelEdit(Win* ob, const std::string& text, Edit::fn_edit edit, const char* find = nullptr);
+using MgrPtr = std::shared_ptr<Mgr>;
+
+ButtonPtr GetButton(WinPtr ob, Win::fn_click click, const char* find = nullptr);
+CheckPtr GetCheck(WinPtr ob, bool value, Check::fn_check check, const char* find = nullptr);
+EditPtr GetEdit(WinPtr ob, const std::string& text, Edit::fn_edit edit, const char* find = nullptr);
+LabelEditPtr GetLabelEdit(WinPtr ob, const std::string& text, Edit::fn_edit edit, const char* find = nullptr);
 
 
 NAMESPACE_END

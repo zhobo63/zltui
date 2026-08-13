@@ -121,13 +121,15 @@ Object Edit
     DockOffset 0 -4 0 0
     ScrollY true
     Text Type your message...\nThis is next line\nABC
+    DrawBorder true
+    BorderStyle none
     FgColor BrightYellow
 }
     )");
 
-    TUI::Slider* filesPanel = mgr.GetUI<TUI::Slider>("filesPanel");
-    TUI::Slider* chatArea = mgr.GetUI<TUI::Slider>("chatArea");
-    TUI::Edit* inputBar = mgr.GetUI<TUI::Edit>("inputBar");
+    TUI::SliderPtr filesPanel = mgr.GetUI<TUI::Slider>("filesPanel");
+    TUI::SliderPtr chatArea = mgr.GetUI<TUI::Slider>("chatArea");
+    TUI::EditPtr inputBar = mgr.GetUI<TUI::Edit>("inputBar");
 
     std::string md = u8R"(
 # RichText Markdown Demo
@@ -194,6 +196,10 @@ Unmatched markers stay visible: *unmatched and **also unmatched.
     TUI::Markdown(richEdit, md);
     chatArea->AddChild(TUI::WinPtr(richEdit));
 
+    uint32_t uint_value = 0;
+    TUI::LabelEditPtr ed_int = chatArea->Create<TUI::LabelEdit>();
+    //ed_int->local = { 0,45, 40 , 45 };
+    ed_int->Input("UInt", uint_value, nullptr);
 
     std::filesystem::path current_path = ".";
 
@@ -201,7 +207,6 @@ Unmatched markers stay visible: *unmatched and **also unmatched.
         // Clear existing children
         filesPanel->child.clear();
         filesPanel->scroll_value.y = 0;
-        filesPanel->mgr->notify_ = nullptr;
 
         int file_y = 0;
 
@@ -278,7 +283,7 @@ Unmatched markers stay visible: *unmatched and **also unmatched.
         }
         return false;
         };
-    mgr.notify_ = inputBar;
+    mgr.notify_ = mgr.GetUI("inputBar");
 
     while (!quit) {
         if (mgr.Update(terminal)) {

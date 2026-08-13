@@ -2399,14 +2399,15 @@ bool Win::ParseCmd(const std::string &cmd, EditLine& el)
         }
     }
     else if (eqi(cmd, "Clone")) {
-        Win* ob = GetUI(el.tok());
+        auto ob = GetUI(el.tok());
         if (ob) {
-            child.push_back(WinPtr(ob));
+            ob = ob->Clone();
+            child.push_back(ob);
             ob->Parse(el);
         }
     }
     else if (eqi(cmd, "Param")) {
-        Win* ob = GetUI(el.tok());
+        auto ob = GetUI(el.tok());
         if (ob) {
             ob->Parse(el);
         }
@@ -2782,33 +2783,35 @@ void Win::PaintBorder(DrawBuffer& drawbuf)
     }
 }
 
-Win* Win::GetUI(const std::string& _name)
+WinPtr Win::GetUI(const std::string& _name)
 {
-    if (name == _name)
-        return this;
     for (auto ch : child) {
-        Win* found = ch->GetUI(_name);
+        if (ch->name == _name)
+            return ch;
+        auto found = ch->GetUI(_name);
         if (found)
             return found;
     }
     return nullptr;
 }
 
-Win* Win::GetNotify(const Point& pt)
+WinPtr Win::GetNotify(const Point& pt)
 {
-    if (!is_visible)
-        return nullptr;
-    if (!clip.inside(pt))
-        return nullptr;
     for (int i = (int)child.size() - 1; i >= 0; i--) {
         auto ch = child[i];
-        Win* n = ch->GetNotify(pt);
+        if (!ch->is_visible)
+            continue;
+        if (!ch->clip.inside(pt))
+            continue;
+        WinPtr n = ch->GetNotify(pt);
         if (n) { return n; }
+        if (ch->is_notifiable)
+            return ch;
     }
-    return (is_notifiable) ? this : nullptr;
+    return WinPtr(nullptr);
 }
 
-Win* Win::GetSlider(const Point& pt)
+WinPtr Win::GetSlider(const Point& pt)
 {
     if (!is_visible)
         return nullptr;
@@ -2816,10 +2819,16 @@ Win* Win::GetSlider(const Point& pt)
         return nullptr;
     for (int i = (int)child.size() - 1; i >= 0; i--) {
         auto ch = child[i];
-        Win* n = ch->GetSlider(pt);
+        if (!ch->is_visible)
+            continue;
+        if (!ch->screen.inside(pt))
+            continue;
+        auto n = ch->GetSlider(pt);
         if (n) { return n; }
+        if (ch->IsSlider() && ch->is_notifiable)
+            return ch;
     }
-    return (IsSlider() && is_notifiable) ? this : nullptr;
+    return nullptr;
 }
 
 void Win::AddChild(WinPtr obj)
@@ -2844,15 +2853,17 @@ void Win::Copy(const Win* ob)
     local = ob->local;
 
     for (auto ch : ob->child) {
+        if (!ch->is_cloneable)
+            continue;
         AddChild(WinPtr(ch->Clone()));
     }
 }
 
-Win* Win::Clone() const
+WinPtr Win::Clone() const
 {
     Win *ob = new Win(mgr);
     ob->Copy(this);
-    return ob;
+    return WinPtr(ob);
 }
 
 /// <summary>
@@ -2949,11 +2960,11 @@ void Label::Copy(const Win* ob)
     text_algn = o->text_algn;
     setText(o->text);
 }
-Win* Label::Clone() const
+WinPtr Label::Clone() const
 {
     Label* ob = new Label(mgr);
     ob->Copy(this);
-    return ob;
+    return WinPtr(ob);
 }
 
 /// <summary>
@@ -2992,7 +3003,7 @@ void Button::PaintBorder(DrawBuffer& drawbuf)
     if (is_down) {
         bg = bg_color_down;
     }
-    else if (mgr->hover_ == this) {
+    else if (mgr->hover_.get() == this) {
         bg = bg_color_hover;
     }
     if (draw_border) {
@@ -3007,11 +3018,11 @@ void Button::Copy(const Win* ob)
     bg_color_hover = o->bg_color_hover;
     bg_color_down = o->bg_color_down;
 }
-Win* Button::Clone() const
+WinPtr Button::Clone() const
 {
     Button* ob = new Button(mgr);
     ob->Copy(this);
-    return ob;
+    return WinPtr(ob);
 }
 
 /// <summary>
@@ -3071,12 +3082,13 @@ void Check::Copy(const Win* ob)
     Button::Copy(ob);
     const Check* o = dynamic_cast<const Check*>(ob);
     checked = o->checked;
+    fg_color_checked = o->fg_color_checked;
 }
-Win* Check::Clone() const
+WinPtr Check::Clone() const
 {
     Check* ob = new Check(mgr);
     ob->Copy(this);
-    return ob;
+    return WinPtr(ob);
 }
 
 /// <summary>
@@ -3164,7 +3176,7 @@ void Slider::PaintScrollBar(DrawBuffer& drawbuf)
 
 void Slider::Event(const TUI::Event& ev)
 {
-    if (mgr->hover_slider_ != this)
+    if (mgr->hover_slider_.get() != this)
         return;
     Point pt = { ev.x, ev.y };
     Point old_scroll_value = scroll_value;
@@ -3287,11 +3299,11 @@ void Slider::Copy(const Win* ob)
     color_track = o->color_track;
     color_thumb = o->color_thumb;
 }
-Win* Slider::Clone() const
+WinPtr Slider::Clone() const
 {
     Slider* ob = new Slider(mgr);
     ob->Copy(this);
-    return ob;
+    return WinPtr(ob);
 }
 
 ///
@@ -3309,7 +3321,7 @@ static bool TextEvent(
 {
     bool change = false;
     Mgr* mgr = slider.mgr;
-    if (!mgr || mgr->notify_ != &slider)
+    if (!mgr || mgr->notify_.get() != &slider)
         return change;
 
     if (ev.type == EventType_Mouse) {
@@ -3513,7 +3525,7 @@ void Edit::PaintText(DrawBuffer& drawbuf)
         int ty = clip.y - scroll_value.y;
         drawbuf.Text({ tx, ty }, *this, fg_color);
     }
-    if (mgr->notify_ == this) {
+    if (mgr->notify_.get() == this) {
         int cx = clip.x + cursor.x - scroll_value.x;
         int cy = clip.y + cursor.y - scroll_value.y;
         drawbuf.SetColor({ cx,cy }, COLOR_CURSOR, COLOR_CURSOR_BG);
@@ -3523,13 +3535,16 @@ void Edit::PaintText(DrawBuffer& drawbuf)
 
 void Edit::setText(const std::string& _text)
 {
-    Text::setText(_text, local.width());
+    std::string new_text = _text;
+    if (on_edit) {
+        new_text = on_edit(this, _text);
+    }
+    if (new_text == text)
+        return;
+    Text::setText(new_text, local.width());
     selected.unselect();
     cursor = { 0,0 };
     mgr->is_dirty = true;
-    if (on_edit) {
-        on_edit(this, text);
-    }
 }
 
 void Edit::Event(const TUI::Event& ev)
@@ -3537,7 +3552,10 @@ void Edit::Event(const TUI::Event& ev)
     Slider::Event(ev);
     if (TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev)) {
         if (on_edit) {
-            on_edit(this, text);
+            std::string new_text = on_edit(this, text);
+            if (new_text != text) {
+                Text::setText(new_text, local.width());
+            }
         }
     }
 }
@@ -3560,11 +3578,11 @@ void Edit::Copy(const Win* ob)
     cursor = other->cursor;
     readonly = other->readonly;
 }
-Win* Edit::Clone() const
+WinPtr Edit::Clone() const
 {
     Edit* ob = new Edit(mgr);
     ob->Copy(this);
-    return ob;
+    return WinPtr(ob);
 }
 
 /// <summary>
@@ -3619,7 +3637,7 @@ void LabelEdit::PaintText(DrawBuffer& drawbuf)
         int ty = clip.y - scroll_value.y;
         drawbuf.Text({ tx, ty }, *this, fg_color);
     }
-    if (mgr->notify_ == this) {
+    if (mgr->notify_.get() == this) {
         int cx = clip.x + cursor.x - scroll_value.x;
         int cy = clip.y + cursor.y - scroll_value.y;
         drawbuf.SetColor({ cx,cy }, COLOR_CURSOR, COLOR_CURSOR_BG);
@@ -3629,7 +3647,7 @@ void LabelEdit::PaintText(DrawBuffer& drawbuf)
 void LabelEdit::PaintBorder(DrawBuffer& drawbuf)
 {
     Color bg = bg_color;
-    if (mgr->hover_ == this) {
+    if (mgr->hover_.get() == this) {
         bg = bg_color_hover;
     }
     if (draw_border) {
@@ -3645,11 +3663,85 @@ void LabelEdit::Copy(const Win* ob)
     label_width = other->label_width;
 }
 
-Win* LabelEdit::Clone() const
+WinPtr LabelEdit::Clone() const
 {
     LabelEdit* ob = new LabelEdit(mgr);
     ob->Copy(this);
-    return ob;
+    return WinPtr(ob);
+}
+
+void LabelEdit::Input(const std::string& _label, std::string& value, fn_edit onedit)
+{
+    label = _label;
+    setText(value);
+    on_edit = [onedit, &value](Edit* edit, const std::string& text) -> const std::string& {
+        value = text;
+        if (onedit) {
+            value = onedit(edit, text);
+        }
+        return value;
+        };
+}
+void LabelEdit::Input(const std::string& _label, uint32_t& value, fn_edit onedit)
+{
+    label = _label;
+    setText(std::to_string(value));
+    on_edit = [onedit, &value](Edit* edit, const std::string& _text) -> const std::string& {
+        try {
+            value = std::stoi(_text);
+        }
+        catch (...) {}
+        if (onedit) {
+            std::string new_text = onedit(edit, _text);
+            if (new_text != _text) {
+                edit->setText(new_text);
+            }
+        }
+        return std::to_string(value);
+        };
+    int w = local.width();
+    ButtonPtr sub = ButtonPtr(new TUI::Button(mgr));
+    sub->local = { w - 6, 0, w - 3 ,0 };
+    sub->setText("-");
+    sub->on_click = [&]() {
+        value--;
+        setText(std::to_string(value));
+        };
+    AddChild(sub);
+    ButtonPtr add = ButtonPtr(new TUI::Button(mgr));
+    add->local = { w - 3, 0, w - 1 ,0 };
+    add->setText("+");
+
+    AddChild(add);
+}
+void LabelEdit::Button(const std::string& _label, std::string& value, fn_click onclick)
+{
+    label = _label;
+    ButtonPtr btn = ButtonPtr(new TUI::Button(mgr));
+    btn->local = { label_width, 0, local.width() - 1, local.height() - 1 };
+    btn->setText(value);
+    btn->is_cloneable = false;
+    btn->on_click = onclick;
+    controls.push_back(btn);
+    AddChild(btn);
+}
+void LabelEdit::Check(const std::string& _label, bool& value, Check::fn_check oncheck, const char* check_text[])
+{
+    label = _label;
+    CheckPtr chk = CheckPtr(new TUI::Check(mgr));
+    chk->local = { label_width, 0, local.width() - 1, local.height() - 1 };
+    if (check_text) {
+        chk->setText(value ? check_text[0] : check_text[1]);
+    }
+    chk->is_cloneable = false;
+    chk->on_check = [&value, oncheck](bool checked) {
+        value = checked;
+        if (oncheck) {
+            oncheck(value);
+        }
+        };
+    controls.push_back(chk);
+    AddChild(chk);
 }
 
 /// <summary>
@@ -3761,7 +3853,7 @@ void RichEdit::PaintText(DrawBuffer& drawbuf)
         drawbuf.Text({ tx, ty }, *this);
     }
 
-    if (mgr && mgr->notify_ == this) {
+    if (mgr && mgr->notify_.get() == this) {
         int cx = clip.x + cursor.x - scroll_value.x;
         int cy = clip.y + cursor.y - scroll_value.y;
         drawbuf.SetColor({ cx, cy }, COLOR_CURSOR, COLOR_CURSOR_BG);
@@ -3772,12 +3864,15 @@ void RichEdit::PaintText(DrawBuffer& drawbuf)
 
 void RichEdit::setText(const std::string& _text)
 {
-    RichText::setText(_text, local.width());
+    std::string new_text = _text;
+    if (on_edit) {
+        new_text = on_edit(this, text);
+    }
+    if (new_text == text)
+        return;
+    RichText::setText(new_text, local.width());
     selected.unselect();
     cursor = { 0, 0 };
-    if (on_edit) {
-        on_edit(this, text);
-    }
     if (mgr)
         mgr->is_dirty = true;
 }
@@ -3787,7 +3882,10 @@ void RichEdit::Event(const TUI::Event& ev)
     Slider::Event(ev);
     if (TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev)) {
         if (on_edit) {
-            on_edit(this, text);
+            std::string new_text = on_edit(this, text);
+            if (new_text != text) {
+                RichText::setText(new_text, local.width());
+            }
         }
     }
 }
@@ -3816,11 +3914,11 @@ void RichEdit::Copy(const Win* ob)
     current_style = other->current_style;
 }
 
-Win* RichEdit::Clone() const
+WinPtr RichEdit::Clone() const
 {
     RichEdit* ob = new RichEdit(mgr);
     ob->Copy(this);
-    return ob;
+    return WinPtr(ob);
 }
 
 /// <summary>
@@ -4391,7 +4489,7 @@ bool Mgr::Update(Terminal& terminal)
             Point pt = { ev.x, ev.y };
             bool any_down = ev.any_button_down();
             bool first_down = any_down && ev.any_first_down();
-            Win* notify = GetNotify(pt);
+            auto notify = GetNotify(pt);
             if (notify) {
                 if (notify != notify_) {
                     if (first_down) {
@@ -4426,7 +4524,7 @@ bool Mgr::Update(Terminal& terminal)
             if (notify_) {
                 notify_->Event(ev);
             }
-            hover_slider_ = GetSlider(pt);
+            hover_slider_ = WinPtr(GetSlider(pt));
             if (hover_slider_ && hover_slider_ != notify_) {
                 hover_slider_->Event(ev);
             }
@@ -4445,9 +4543,9 @@ void Mgr::Paint(DrawBuffer& drawbuf)
 /// 輔助
 /// </summary>
 
-Button* GetButton(Win* ob, std::function<void()> click, const char* find)
+ButtonPtr GetButton(WinPtr ob, std::function<void()> click, const char* find)
 {
-    Button* btn = dynamic_cast<Button*> (ob);
+    ButtonPtr btn = std::dynamic_pointer_cast<Button>(ob);
     if (find) {
         btn = ob->GetUI<Button>(find);
     }
@@ -4457,9 +4555,9 @@ Button* GetButton(Win* ob, std::function<void()> click, const char* find)
     return btn;
 }
 
-Check* GetCheck(Win* ob, bool value, Check::fn_check check, const char* find)
+CheckPtr GetCheck(WinPtr ob, bool value, Check::fn_check check, const char* find)
 {
-    Check* chk = dynamic_cast<Check*>(ob);
+    CheckPtr chk = std::dynamic_pointer_cast<Check>(ob);
     if (find) {
         chk = ob->GetUI<Check>(find);
     }
@@ -4469,9 +4567,9 @@ Check* GetCheck(Win* ob, bool value, Check::fn_check check, const char* find)
     return chk;
 }
 
-Edit* GetEdit(Win* ob, const std::string& text, Edit::fn_edit func, const char* find)
+EditPtr GetEdit(WinPtr ob, const std::string& text, Edit::fn_edit func, const char* find)
 {
-    Edit* ed = dynamic_cast<Edit*>(ob);
+    EditPtr ed = std::dynamic_pointer_cast<Edit>(ob);
     if (find) {
         ed = ob->GetUI<Edit>(find);
     }
@@ -4482,9 +4580,9 @@ Edit* GetEdit(Win* ob, const std::string& text, Edit::fn_edit func, const char* 
     return ed;
 }
 
-LabelEdit* GetLabelEdit(Win* ob, const std::string& text, Edit::fn_edit func, const char* find)
+LabelEditPtr GetLabelEdit(WinPtr ob, const std::string& text, Edit::fn_edit func, const char* find)
 {
-    LabelEdit* ed = dynamic_cast<LabelEdit*>(ob);
+    LabelEditPtr ed = std::dynamic_pointer_cast<LabelEdit>(ob);
     if (find) {
         ed = ob->GetUI<LabelEdit>(find);
     }
