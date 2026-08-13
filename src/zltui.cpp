@@ -2349,6 +2349,9 @@ Color Win::COLOR_THUMB(159, 159, 159);
 Color Win::COLOR_SELECTED(120, 120, 120);
 Color Win::COLOR_CURSOR(AnsiColor_Black);
 Color Win::COLOR_CURSOR_BG(120, 180, 255);
+Color Win::COLOR_LABEL(150, 150, 150);
+Color Win::COLOR_BUTTON(200, 200, 200);
+Color Win::COLOR_CHECKED(100, 255, 100);
 
 bool Win::Parse(EditLine& el)
 {
@@ -2858,6 +2861,7 @@ Win* Win::Clone() const
 
 Label::Label(Mgr* mgr) :Win(mgr) {
     is_notifiable = false;
+    fg_color = COLOR_LABEL;
 }
 
 bool Label::ParseCmd(const std::string& cmd, EditLine& el)
@@ -2961,6 +2965,7 @@ Button::Button(Mgr* mgr) :Label(mgr) {
     border_style = BorderStyle_None;
     draw_border = true;
     bg_color = COLOR_BTN;
+    fg_color = COLOR_BUTTON;
     is_notifiable = true;
 }
 
@@ -3018,6 +3023,19 @@ Check::Check(Mgr* mgr) : Button(mgr) {
     text_algn = Align_Start;
 }
 
+bool Check::ParseCmd(const std::string& cmd, EditLine& el)
+{
+    bool ret = true;
+    if (eqi(cmd, "ColorChecked")) {
+        fg_color_checked = Color::Parse(el.tok());
+    }
+    else if (Button::ParseCmd(cmd, el)) {
+    }
+    else {
+        ret = false;
+    }
+    return ret;
+}
 
 void Check::PaintText(DrawBuffer& drawbuf)
 {
@@ -3035,7 +3053,8 @@ void Check::PaintText(DrawBuffer& drawbuf)
             tx = clip.x2 - text_width;
             break;
         }
-        drawbuf.Text(text, { tx, clip.y }, fg_color, bold, italic, underline);
+        Color fgcolor = checked ? fg_color_checked : fg_color;
+        drawbuf.Text(text, { tx, clip.y }, fgcolor, bold, italic, underline);
     }
 }
 
@@ -3078,10 +3097,10 @@ bool Slider::ParseCmd(const std::string& cmd, EditLine& el)
     else if (eqi(cmd, "ScrollY")) {
         is_scroll_y = el.tok_bool();
     }
-    else if (eqi(cmd, "TrackColor")) {
+    else if (eqi(cmd, "ColorTrack")) {
         color_track = Color::Parse(el.tok());
     }
-    else if (eqi(cmd, "ThumbColor")) {
+    else if (eqi(cmd, "ColorThumb")) {
         color_thumb = Color::Parse(el.tok());
     }
     else if (Win::ParseCmd(cmd, el)) {
@@ -3572,6 +3591,9 @@ bool LabelEdit::ParseCmd(const std::string& cmd, EditLine& el)
     else if (eqi(cmd, "ColorHover")) {
         bg_color_hover = Color::Parse(el.tok());
     }
+    else if (eqi(cmd, "ColorLabel")) {
+        fg_color_label = Color::Parse(el.tok());
+    }
     else if (Edit::ParseCmd(cmd, el)) {
     }
     else {
@@ -3589,7 +3611,7 @@ void LabelEdit::PaintText(DrawBuffer& drawbuf)
     {
         int tx = clip.x - label_width;
         int ty = clip.y;
-        drawbuf.Text(label, { tx, ty }, fg_color);
+        drawbuf.Text(label, { tx, ty }, fg_color_label);
     }
     drawbuf.PushClip(clip);
     if (!text.empty()) {

@@ -542,6 +542,9 @@ struct Win
     static Color COLOR_SELECTED;
     static Color COLOR_CURSOR;
     static Color COLOR_CURSOR_BG;
+    static Color COLOR_LABEL;
+    static Color COLOR_BUTTON;
+    static Color COLOR_CHECKED;
 };
 
 struct Label : Win, Text
@@ -574,12 +577,14 @@ struct Button : Label
 struct Check : Button
 {
     Check(Mgr* mgr);
+    bool ParseCmd(const std::string& cmd, EditLine& el) override;
     void PaintText(DrawBuffer& drawbuf) override;
     void Click() override;
     void Copy(const Win* ob) override;
     Win* Clone() const override;
 
     bool checked = false;
+    Color fg_color_checked = COLOR_CHECKED;
 
     using fn_check = std::function<void(bool)>;
     fn_check on_check;
@@ -647,6 +652,7 @@ struct LabelEdit : Edit
     std::string label = "";
     int label_width = 16;
     Color bg_color_hover = COLOR_HOVER;
+    Color fg_color_label = COLOR_LABEL;
 };
 
 struct RichEdit : Slider, RichText
