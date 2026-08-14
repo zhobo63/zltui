@@ -2392,7 +2392,7 @@ bool Win::ParseCmd(const std::string &cmd, EditLine& el)
     if (eqi(cmd, "{")) {
     }
     else if (eqi(cmd, "Object")) {
-        auto ob = mgr->Create(el.tok());
+        auto ob = Mgr::CreateByID(el.tok(), mgr);
         if (ob) {
             child.push_back(ob);
             ob->Parse(el);
@@ -2837,6 +2837,15 @@ void Win::AddChild(WinPtr obj)
     mgr->is_dirty = true;
 }
 
+void Win::RemoveChild(const WinPtr& obj)
+{
+    auto it = std::find(child.begin(), child.end(), obj);
+    if (it != child.end()) {
+        child.erase(it);
+        mgr->is_dirty = true;
+    }
+}
+
 void Win::Copy(const Win* ob)
 {
     name = ob->name;
@@ -3040,6 +3049,12 @@ bool Check::ParseCmd(const std::string& cmd, EditLine& el)
     if (eqi(cmd, "ColorChecked")) {
         fg_color_checked = Color::Parse(el.tok());
     }
+    else if (eqi(cmd, "TextChecked")) {
+        check_text.checked = ParseText(el.tok_line());
+    }
+    else if (eqi(cmd, "TextUnchecked")) {
+        check_text.unchecked = ParseText(el.tok_line());
+    }
     else if (Button::ParseCmd(cmd, el)) {
     }
     else {
@@ -3069,12 +3084,21 @@ void Check::PaintText(DrawBuffer& drawbuf)
     }
 }
 
-void Check::Click()
+void Check::SetChecked(bool _checked)
 {
-    checked = !checked;
+    if (checked == _checked)
+        return;
+    checked = _checked;
+    if(!check_text.checked.empty() && !check_text.unchecked.empty())
+        setText(checked ? check_text.checked : check_text.unchecked);
     if (on_check) {
         on_check(checked);
     }
+}
+
+void Check::Click()
+{
+    SetChecked(!checked);
 }
 
 void Check::Copy(const Win* ob)
@@ -3083,6 +3107,7 @@ void Check::Copy(const Win* ob)
     const Check* o = dynamic_cast<const Check*>(ob);
     checked = o->checked;
     fg_color_checked = o->fg_color_checked;
+    check_text = o->check_text;
 }
 WinPtr Check::Clone() const
 {
@@ -3090,6 +3115,59 @@ WinPtr Check::Clone() const
     ob->Copy(this);
     return WinPtr(ob);
 }
+
+/// <summary>
+/// Combo
+/// </summary>
+
+Combo::Combo(Mgr* mgr) :Button(mgr)
+{
+    text_algn = Align_Start;
+}
+
+bool Combo::ParseCmd(const std::string& cmd, EditLine& el)
+{
+    bool ret = true;
+    if (eqi(cmd, "Item")) {
+        items.push_back(ParseText(el.tok_line()));
+    }
+    else if (Button::ParseCmd(cmd, el)) {
+    }
+    else {
+        ret = false;
+    }
+    return ret;
+}
+
+void Combo::SetValue(int _value)
+{
+    if (value == _value)
+        return;
+    value = _value;
+    setText(value >= 0 && value < items.size() ? items[value] : "");
+    if (on_selected) {
+        on_selected(value);
+    }
+}
+
+void Combo::Click()
+{
+
+}
+
+void Combo::Copy(const Win* ob)
+{
+    Button::Copy(ob);
+    const Combo* o = dynamic_cast<const Combo*>(ob);
+    items = o->items;
+}
+WinPtr Combo::Clone() const
+{
+    Combo* ob = new Combo(mgr);
+    ob->Copy(this);
+    return WinPtr(ob);
+}
+
 
 /// <summary>
 /// Slider
@@ -3535,16 +3613,15 @@ void Edit::PaintText(DrawBuffer& drawbuf)
 
 void Edit::setText(const std::string& _text)
 {
-    std::string new_text = _text;
-    if (on_edit) {
-        new_text = on_edit(this, _text);
-    }
-    if (new_text == text)
+    if (text == _text)
         return;
-    Text::setText(new_text, local.width());
+    Text::setText(_text, local.width());
     selected.unselect();
     cursor = { 0,0 };
     mgr->is_dirty = true;
+    if (on_edit) {
+        on_edit(this, _text);
+    }
 }
 
 void Edit::Event(const TUI::Event& ev)
@@ -3552,10 +3629,7 @@ void Edit::Event(const TUI::Event& ev)
     Slider::Event(ev);
     if (TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev)) {
         if (on_edit) {
-            std::string new_text = on_edit(this, text);
-            if (new_text != text) {
-                Text::setText(new_text, local.width());
-            }
+            on_edit(this, text);
         }
     }
 }
@@ -3674,74 +3748,65 @@ void LabelEdit::Input(const std::string& _label, std::string& value, fn_edit one
 {
     label = _label;
     setText(value);
-    on_edit = [onedit, &value](Edit* edit, const std::string& text) -> const std::string& {
+    on_edit = [onedit, &value](Edit* edit, const std::string& text) {
         value = text;
         if (onedit) {
-            value = onedit(edit, text);
+            onedit(edit, text);
         }
-        return value;
         };
 }
-void LabelEdit::Input(const std::string& _label, uint32_t& value, fn_edit onedit)
+void LabelEdit::Input(const std::string& _label, uint32_t& value, uint32_t step, fn_edit onedit)
 {
     label = _label;
     setText(std::to_string(value));
-    on_edit = [onedit, &value](Edit* edit, const std::string& _text) -> const std::string& {
+    on_edit = [onedit, &value](Edit* edit, const std::string& _text) {
         try {
             value = std::stoi(_text);
         }
         catch (...) {}
         if (onedit) {
-            std::string new_text = onedit(edit, _text);
-            if (new_text != _text) {
-                edit->setText(new_text);
-            }
+            onedit(edit, _text);
         }
-        return std::to_string(value);
         };
-    int w = local.width();
-    ButtonPtr sub = ButtonPtr(new TUI::Button(mgr));
-    sub->local = { w - 6, 0, w - 3 ,0 };
+    int w = local.width() - label_width;
+    ButtonPtr sub = Create<TUI::Button>("-", { w - 6, 0, w - 4, 0 });
+    sub->is_cloneable = false;
     sub->setText("-");
-    sub->on_click = [&]() {
-        value--;
+    sub->on_click = [&, step]() {
+        if (value >= step) {
+            value -= step;
+            setText(std::to_string(value));
+        }
+        };
+    ButtonPtr add = Create<TUI::Button>("+", { w - 3, 0, w - 1, 0 });
+    add->is_cloneable = false;
+    add->setText("+");
+    add->on_click = [&, step]() {
+        value += step;
         setText(std::to_string(value));
         };
-    AddChild(sub);
-    ButtonPtr add = ButtonPtr(new TUI::Button(mgr));
-    add->local = { w - 3, 0, w - 1 ,0 };
-    add->setText("+");
-
-    AddChild(add);
 }
-void LabelEdit::Button(const std::string& _label, std::string& value, fn_click onclick)
+void LabelEdit::Button(const std::string& _label, const std::string& value, fn_click onclick)
 {
     label = _label;
-    ButtonPtr btn = ButtonPtr(new TUI::Button(mgr));
-    btn->local = { label_width, 0, local.width() - 1, local.height() - 1 };
+    ButtonPtr btn = Create<TUI::Button>("+", { 0, 0, local.width() - label_width - 1, 0 });
     btn->setText(value);
     btn->is_cloneable = false;
     btn->on_click = onclick;
-    controls.push_back(btn);
-    AddChild(btn);
 }
-void LabelEdit::Check(const std::string& _label, bool& value, Check::fn_check oncheck, const char* check_text[])
+void LabelEdit::Check(const std::string& _label, bool& value, const Check::CheckText& check_text, Check::fn_check oncheck)
 {
     label = _label;
-    CheckPtr chk = CheckPtr(new TUI::Check(mgr));
-    chk->local = { label_width, 0, local.width() - 1, local.height() - 1 };
-    if (check_text) {
-        chk->setText(value ? check_text[0] : check_text[1]);
-    }
+    CheckPtr chk = Create<TUI::Check>("", { 0, 0, local.width() - label_width - 1, 0 });
+    chk->check_text = check_text;
     chk->is_cloneable = false;
-    chk->on_check = [&value, oncheck](bool checked) {
+    chk->SetChecked(value);
+    chk->on_check = [&value, oncheck, chk](bool checked) {
         value = checked;
         if (oncheck) {
             oncheck(value);
         }
         };
-    controls.push_back(chk);
-    AddChild(chk);
 }
 
 /// <summary>
@@ -3864,17 +3929,16 @@ void RichEdit::PaintText(DrawBuffer& drawbuf)
 
 void RichEdit::setText(const std::string& _text)
 {
-    std::string new_text = _text;
-    if (on_edit) {
-        new_text = on_edit(this, text);
-    }
-    if (new_text == text)
+    if (text == _text)
         return;
-    RichText::setText(new_text, local.width());
+    RichText::setText(_text, local.width());
     selected.unselect();
     cursor = { 0, 0 };
     if (mgr)
         mgr->is_dirty = true;
+    if (on_edit) {
+        on_edit(this, _text);
+    }
 }
 
 void RichEdit::Event(const TUI::Event& ev)
@@ -3882,10 +3946,7 @@ void RichEdit::Event(const TUI::Event& ev)
     Slider::Event(ev);
     if (TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev)) {
         if (on_edit) {
-            std::string new_text = on_edit(this, text);
-            if (new_text != text) {
-                RichText::setText(new_text, local.width());
-            }
+            on_edit(this, text);
         }
     }
 }
@@ -4425,32 +4486,35 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
 /// Mgr
 /// </summary>
 
-WinPtr Mgr::Create(std::string csid)
+WinPtr Mgr::CreateByID(std::string csid, Mgr* mgr)
 {
     Win* ob = nullptr;
     if (eqi(csid, "Win")) {
-        ob = new Win(this);
+        ob = new Win(mgr);
     }
     else if (eqi(csid, "Label")) {
-        ob = new Label(this);
+        ob = new Label(mgr);
     }
     else if (eqi(csid, "Button")) {
-        ob = new Button(this);
+        ob = new Button(mgr);
     }
     else if (eqi(csid, "Check")) {
-        ob = new Check(this);
+        ob = new Check(mgr);
+    }
+    else if (eqi(csid, "Combo")) {
+        ob = new Combo(mgr);
     }
     else if (eqi(csid, "Slider")) {
-        ob = new Slider(this);
+        ob = new Slider(mgr);
     }
     else if (eqi(csid, "Edit")) {
-        ob = new Edit(this);
+        ob = new Edit(mgr);
     }
     else if (eqi(csid, "LabelEdit")) {
-        ob = new LabelEdit(this);
+        ob = new LabelEdit(mgr);
     }
     else if (eqi(csid, "RichEdit")) {
-        ob = new RichEdit(this);
+        ob = new RichEdit(mgr);
     }
     return WinPtr(ob);
 }
@@ -4528,6 +4592,9 @@ bool Mgr::Update(Terminal& terminal)
             if (hover_slider_ && hover_slider_ != notify_) {
                 hover_slider_->Event(ev);
             }
+
+            if (any_down)
+                ClosePopup();
         }
     }
     std::cout << CursorMove(cursor.x, cursor.y);
@@ -4537,6 +4604,21 @@ void Mgr::Paint(DrawBuffer& drawbuf)
 {
     Win::Paint(drawbuf);
     is_dirty = false;
+}
+
+void Mgr::Popup(WinPtr ob)
+{
+    ClosePopup();
+    ob->is_visible = true;
+    AddChild(ob);
+    popup_ = ob;
+}
+void Mgr::ClosePopup()
+{
+    if (popup_) {
+        RemoveChild(popup_);
+        popup_ = nullptr;
+    }
 }
 
 /// <summary>

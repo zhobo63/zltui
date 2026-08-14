@@ -497,6 +497,7 @@ struct Win
     virtual void Copy(const Win* ob);
     virtual WinPtr Clone() const;
     virtual void AddChild(WinPtr obj);
+    virtual void RemoveChild(const WinPtr& obj);
     virtual void Click() { if (on_click) on_click(); }
     virtual bool IsSlider() const { return false; }
     virtual void Event(const Event& ev) {}
@@ -508,8 +509,10 @@ struct Win
         return std::dynamic_pointer_cast<T>(GetUI(std::string(name)));
     }
     template<class T>
-    std::shared_ptr<T> Create() {
+    std::shared_ptr<T> Create(const std::string& name = "", const Rect& r = {}) {
         auto ptr = WinPtr(new T(mgr));
+        ptr->name = name;
+        ptr->local = r;
         AddChild(ptr);
         return std::dynamic_pointer_cast<T>(ptr);
     }
@@ -593,9 +596,16 @@ struct Check : Button
     void Click() override;
     void Copy(const Win* ob) override;
     WinPtr Clone() const override;
+    void SetChecked(bool checked);
+
+    struct CheckText {
+        std::string checked;
+        std::string unchecked;
+    };
 
     bool checked = false;
     Color fg_color_checked = COLOR_CHECKED;
+    CheckText check_text = {};
 
     using fn_check = std::function<void(bool)>;
     fn_check on_check;
@@ -603,7 +613,24 @@ struct Check : Button
 
 using CheckPtr = std::shared_ptr<Check>;
 
-//TODO Combo Popup
+struct Combo : Button
+{
+    Combo(Mgr* mgr);
+
+    bool ParseCmd(const std::string& cmd, EditLine& el) override;
+    void Click() override;
+    void Copy(const Win* ob) override;
+    WinPtr Clone() const override;
+    void SetValue(int value);
+
+    int value = -1;
+    std::vector<std::string> items;
+
+    using fn_selected = std::function<void(int)>;
+    fn_selected on_selected;
+};
+
+using ComboPtr = std::shared_ptr<Combo>;
 
 struct Slider : Win
 {
@@ -649,7 +676,7 @@ struct Edit : Slider, Text
     bool readonly = false;
 
     using fn_key = std::function<bool(const TUI::Event& evt)>;
-    using fn_edit = std::function<const std::string& (Edit* edit, const std::string& text)>;
+    using fn_edit = std::function<void (Edit* edit, const std::string& text)>;
     
     fn_key on_key;
     fn_edit on_edit;
@@ -668,23 +695,22 @@ struct LabelEdit : Edit
     void Copy(const Win* ob) override;
     WinPtr Clone() const override;
 
-    void Input(const std::string& label, std::string& value, fn_edit onedit);
-    void Input(const std::string& label, uint32_t& value, fn_edit onedit);
-    void Button(const std::string& label, std::string& value, fn_click onclick);
-    void Check(const std::string& label, bool& value, Check::fn_check oncheck, const char* check_text[2] = nullptr);
+    void Input(const std::string& label, std::string& value, fn_edit onedit = nullptr);
+    void Input(const std::string& label, uint32_t& value, uint32_t step = 1, fn_edit onedit = nullptr);
+    void Button(const std::string& label, const std::string& value, fn_click onclick);
+    void Check(const std::string& label, bool& value, const Check::CheckText & check_text = {}, Check::fn_check oncheck = nullptr);
 
     enum Type_ {
         Type_Button,
         Type_Edit,
         Type_Check,
+        Type_Combo,
     };
 
     std::string label = "";
     int label_width = 16;
     Color bg_color_hover = COLOR_HOVER;
     Color fg_color_label = COLOR_LABEL;
-
-    std::vector<WinPtr> controls;
 };
 
 using LabelEditPtr = std::shared_ptr<LabelEdit>;
@@ -708,7 +734,7 @@ struct RichEdit : Slider, RichText
     bool readonly = false;
 
     using fn_key = std::function<bool(const TUI::Event& evt)>;
-    using fn_edit = std::function<const std::string& (RichEdit* edit, const std::string& text)>;
+    using fn_edit = std::function<void(RichEdit* edit, const std::string& text)>;
     fn_key on_key;
     fn_edit on_edit;
     RichText::Style current_style;
@@ -753,16 +779,20 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& style 
 struct Mgr : Win
 {
     Mgr() :Win(this) { draw_border = false; }
-    WinPtr Create(std::string csid);
     bool Parse(std::string content);
     bool Update(Terminal& terminal);
     void Paint(DrawBuffer& drawbuf) override;
+    void Popup(WinPtr ob);
+    void ClosePopup();
 
     bool is_dirty = true;
     WinPtr notify_ = nullptr;     //input focus
     WinPtr hover_ = nullptr;
     WinPtr hover_slider_ = nullptr;
+    WinPtr popup_ = nullptr;
     Point cursor;
+
+    static WinPtr CreateByID(std::string csid, Mgr *mgr);
 };
 
 using MgrPtr = std::shared_ptr<Mgr>;

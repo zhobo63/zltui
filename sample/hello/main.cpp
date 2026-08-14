@@ -196,10 +196,20 @@ Unmatched markers stay visible: *unmatched and **also unmatched.
     TUI::Markdown(richEdit, md);
     chatArea->AddChild(TUI::WinPtr(richEdit));
 
+    std::string text_value = "This is label edit";
     uint32_t uint_value = 0;
-    TUI::LabelEditPtr ed_int = chatArea->Create<TUI::LabelEdit>();
-    //ed_int->local = { 0,45, 40 , 45 };
-    ed_int->Input("UInt", uint_value, nullptr);
+    TUI::LabelEditPtr ed_text = chatArea->Create<TUI::LabelEdit>("Text", { 0,44,40,44 });
+    ed_text->Input("Text", text_value);
+
+    TUI::LabelEditPtr ed_int = chatArea->Create<TUI::LabelEdit>("Uint", { 0,45,40,45 });
+    ed_int->Input("UInt", uint_value);
+
+    TUI::LabelEditPtr ed_btn = chatArea->Create<TUI::LabelEdit>("Button", { 0,46,40,46 });
+    ed_btn->Button("Button", "ClickMe", []() {});
+
+    bool check_value = true;
+    TUI::LabelEditPtr ed_chk = chatArea->Create<TUI::LabelEdit>("Check", { 0,47,40,47 });
+    ed_chk->Check("Check", check_value, { "Buy", "Sell" });
 
     std::filesystem::path current_path = ".";
 
