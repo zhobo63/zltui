@@ -618,6 +618,7 @@ struct Combo : Button
     Combo(Mgr* mgr);
 
     bool ParseCmd(const std::string& cmd, EditLine& el) override;
+    void PaintText(DrawBuffer& drawbuf) override;
     void Click() override;
     void Copy(const Win* ob) override;
     WinPtr Clone() const override;
@@ -625,6 +626,7 @@ struct Combo : Button
 
     int value = -1;
     std::vector<std::string> items;
+    WinPtr menu;
 
     using fn_selected = std::function<void(int)>;
     fn_selected on_selected;
@@ -699,6 +701,7 @@ struct LabelEdit : Edit
     void Input(const std::string& label, uint32_t& value, uint32_t step = 1, fn_edit onedit = nullptr);
     void Button(const std::string& label, const std::string& value, fn_click onclick);
     void Check(const std::string& label, bool& value, const Check::CheckText & check_text = {}, Check::fn_check oncheck = nullptr);
+    void Combo(const std::string& label, int& value, const std::vector<std::string>& items, Combo::fn_selected onselect = nullptr);
 
     enum Type_ {
         Type_Button,

@@ -840,7 +840,7 @@ void DrawBuffer::Text(const std::string& text, const Point& pos, const Color& co
         }
 
         int char_width = utf8_char_width(cp);
-        if (clip.inside(Point{ cur_x, cur_y }) && cur_x + char_width <= clip.x2) {
+        if (clip.inside(Point{ cur_x, cur_y }) && cur_x + char_width - 1 <= clip.x2) {
             auto& cell = cells_[px + cur_x];
             cell.fg_color = color;
             cell.size = char_width;
@@ -984,6 +984,7 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
         if (clip.inside(Point {r.x, r.y})) {
             auto& cell = cells_[r.y * width_ + r.x];
             cell.content = tl;
+            cell.size = 1;
             cell.fg_color = color;
             cell.bg_color = bgcolor;
         }
@@ -991,6 +992,7 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
         if (clip.inside(Point{ r.x2, r.y })) {
             auto& cell = cells_[r.y * width_ + r.x2];
             cell.content = tr;
+            cell.size = 1;
             cell.fg_color = color;
             cell.bg_color = bgcolor;
         }
@@ -998,6 +1000,7 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
         if (clip.inside(Point{ r.x, r.y2 })) {
             auto& cell = cells_[r.y2 * width_ + r.x];
             cell.content = bl;
+            cell.size = 1;
             cell.fg_color = color;
             cell.bg_color = bgcolor;
         }
@@ -1005,6 +1008,7 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
         if (clip.inside(Point{ r.x2, r.y2 })) {
             auto& cell = cells_[r.y2 * width_ + r.x2];
             cell.content = br;
+            cell.size = 1;
             cell.fg_color = color;
             cell.bg_color = bgcolor;
         }
@@ -1014,12 +1018,14 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
             if (r.y >= clip.y && r.y <= clip.y2) {
                 auto& cell = cells_[r.y * width_ + x];
                 cell.content = h_line;
+                cell.size = 1;
                 cell.fg_color = color;
                 cell.bg_color = bgcolor;
             }
             if (r.y2 >= clip.y && r.y2 <= clip.y2) {
                 auto& cell = cells_[r.y2 * width_ + x];
                 cell.content = h_line;
+                cell.size = 1;
                 cell.fg_color = color;
                 cell.bg_color = bgcolor;
             }
@@ -1030,12 +1036,14 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
             if (r.x >= clip.x && r.x <= clip.x2) {
                 auto& cell = cells_[y * width_ + r.x];
                 cell.content = v_line;
+                cell.size = 1;
                 cell.fg_color = color;
                 cell.bg_color = bgcolor;
             }
             if (r.x2 >= clip.x && r.x2 <= clip.x2) {
                 auto& cell = cells_[y * width_ + r.x2];
                 cell.content = v_line;
+                cell.size = 1;
                 cell.fg_color = color;
                 cell.bg_color = bgcolor;
             }
@@ -1050,6 +1058,7 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
         for (int x = std::max(fill_x_start, clip.x); x <= fill_x_end && x <= clip.x2; x++) {
             auto& cell = cells_[y * width_ + x];
             cell.content = " ";
+            cell.size = 1;
             cell.bg_color = bgcolor;
         }
     }
@@ -3139,6 +3148,12 @@ bool Combo::ParseCmd(const std::string& cmd, EditLine& el)
     return ret;
 }
 
+void Combo::PaintText(DrawBuffer& drawbuf)
+{
+    Button::PaintText(drawbuf);
+    drawbuf.Text(u8"▼", { clip.x2, clip.y }, AnsiColor_Bright_White);
+}
+
 void Combo::SetValue(int _value)
 {
     if (value == _value)
@@ -3152,7 +3167,35 @@ void Combo::SetValue(int _value)
 
 void Combo::Click()
 {
-
+    if (items.size() == 0)
+        return;
+    if (!menu) {
+        menu = WinPtr(new Slider(mgr));
+        menu->name = "COMBO_POPUP";
+        menu->is_cloneable = false;
+        menu->draw_border = true;
+    }
+    int item_count = 10;
+    if (items.size() < item_count) {
+        item_count = items.size();
+    }
+    menu->child.clear();
+    if (screen.y + item_count + 2 > mgr->local.height()) {
+        menu->local = { screen.x, screen.y - item_count - 2, screen.x2, screen.y - 1 };
+    }
+    else {
+        menu->local = { screen.x, screen.y + 1, screen.x2, screen.y + item_count + 2 };
+    }
+    int w = screen.width() - 3;
+    for (int i = 0; i < items.size(); i++) {
+        ButtonPtr btn = menu->Create<Button>("COMBO_MENU_ITEM", { 0, i, w, i });
+        btn->setText(items[i]);
+        btn->on_click = [&, i]() {
+            SetValue(i);
+            mgr->ClosePopup();
+            };
+    }
+    mgr->Popup(menu);
 }
 
 void Combo::Copy(const Win* ob)
@@ -3805,6 +3848,21 @@ void LabelEdit::Check(const std::string& _label, bool& value, const Check::Check
         value = checked;
         if (oncheck) {
             oncheck(value);
+        }
+        };
+}
+
+void LabelEdit::Combo(const std::string& _label, int& value, const std::vector<std::string>& items, Combo::fn_selected onselect)
+{
+    label = _label;
+    ComboPtr cbo = Create<TUI::Combo>("", { 0, 0, local.width() - label_width - 1, 0 });
+    cbo->items = items;
+    cbo->SetValue(value);
+    cbo->is_cloneable = false;
+    cbo->on_selected = [&value, onselect](int _value) {
+        value = _value;
+        if (onselect) {
+            onselect(_value);
         }
         };
 }
@@ -4562,6 +4620,8 @@ bool Mgr::Update(Terminal& terminal)
                         }
                         notify_ = notify;
                         notify_->is_notify = true;
+
+                        if (popup_) { ClosePopup(); }
                     }
                     is_dirty = true;
                 }
@@ -4592,9 +4652,6 @@ bool Mgr::Update(Terminal& terminal)
             if (hover_slider_ && hover_slider_ != notify_) {
                 hover_slider_->Event(ev);
             }
-
-            if (any_down)
-                ClosePopup();
         }
     }
     std::cout << CursorMove(cursor.x, cursor.y);
@@ -4612,12 +4669,14 @@ void Mgr::Popup(WinPtr ob)
     ob->is_visible = true;
     AddChild(ob);
     popup_ = ob;
+    is_dirty = true;
 }
 void Mgr::ClosePopup()
 {
     if (popup_) {
         RemoveChild(popup_);
         popup_ = nullptr;
+        is_dirty = true;
     }
 }
 

@@ -196,6 +196,10 @@ Unmatched markers stay visible: *unmatched and **also unmatched.
     TUI::Markdown(richEdit, md);
     chatArea->AddChild(TUI::WinPtr(richEdit));
 
+    TUI::ComboPtr cbo = chatArea->Create<TUI::Combo>("Combo", { 0, 2, 20, 2 });
+    cbo->items = {"bold", "italic", "underline"};
+    cbo->SetValue(0);
+
     std::string text_value = "This is label edit";
     uint32_t uint_value = 0;
     TUI::LabelEditPtr ed_text = chatArea->Create<TUI::LabelEdit>("Text", { 0,44,40,44 });
@@ -210,6 +214,10 @@ Unmatched markers stay visible: *unmatched and **also unmatched.
     bool check_value = true;
     TUI::LabelEditPtr ed_chk = chatArea->Create<TUI::LabelEdit>("Check", { 0,47,40,47 });
     ed_chk->Check("Check", check_value, { "Buy", "Sell" });
+
+    int combo_value = -1;
+    TUI::LabelEditPtr ed_cbo = chatArea->Create<TUI::LabelEdit>("Combo", { 0,48,40,48 });
+    ed_cbo->Combo("Combo", combo_value, {"normal", "magenta", "bold", "italic", "underline"});
 
     std::filesystem::path current_path = ".";
 
