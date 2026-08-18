@@ -875,7 +875,7 @@ void DrawBuffer::Text(const Point& pos, const TUI::Text& text, const Color& colo
 
         if (cur_y > clip.y2) break;
 
-        if (clip.inside(Point{ cur_x, cur_y }) && cur_x + ch.char_width <= clip.x2) {
+        if (clip.inside(Point{ cur_x, cur_y }) && cur_x + ch.char_width - 1 <= clip.x2) {
             auto& cell = cells_[cur_y * width_ + cur_x];
             cell.fg_color = color;
             cell.size = ch.char_width;
