@@ -3236,6 +3236,9 @@ bool Slider::ParseCmd(const std::string& cmd, EditLine& el)
     else if (eqi(cmd, "ColorThumb")) {
         color_thumb = Color::Parse(el.tok());
     }
+    else if (eqi(cmd, "ScrollSpeed")) {
+        scroll_speed = el.tok_int();
+    }
     else if (Win::ParseCmd(cmd, el)) {
     }
     else {
@@ -3351,23 +3354,23 @@ void Slider::Event(const TUI::Event& ev)
         if (is_scroll_y && is_scroll_x) {
             if (is_hover_x) {
                 if (scroll_value.x > 0) {
-                    scroll_value.x--;
+                    scroll_value.x -= scroll_speed;
                 }
             }
             else {
                 if (scroll_value.y > 0) {
-                    scroll_value.y--;
+                    scroll_value.y -= scroll_speed;
                 }
             }
         }
         else if (is_scroll_y) {
             if (scroll_value.y > 0) {
-                scroll_value.y--;
+                scroll_value.y -= scroll_speed;
             }
         }
         else if (is_scroll_x) {
             if (scroll_value.x > 0) {
-                scroll_value.x--;
+                scroll_value.x -= scroll_speed;
             }
         }
         break;
@@ -3375,23 +3378,23 @@ void Slider::Event(const TUI::Event& ev)
         if (is_scroll_y && is_scroll_x) {
             if (is_hover_x) {
                 if (scroll_value.x < scroll_max.x) {
-                    scroll_value.x++;
+                    scroll_value.x += scroll_speed;
                 }
             }
             else {
                 if (scroll_value.y < scroll_max.y) {
-                    scroll_value.y++;
+                    scroll_value.y += scroll_speed;
                 }
             }
         }
         else if (is_scroll_y) {
             if (scroll_value.y < scroll_max.y) {
-                scroll_value.y++;
+                scroll_value.y += scroll_speed;
             }
         }
         else if(is_scroll_x) {
             if (scroll_value.x < scroll_max.x) {
-                scroll_value.x++;
+                scroll_value.x += scroll_speed;
             }
         }
         break;
@@ -3433,6 +3436,7 @@ void Slider::Copy(const Win* ob)
     content_length = o->content_length;
     color_track = o->color_track;
     color_thumb = o->color_thumb;
+    scroll_speed = o->scroll_speed;
 }
 WinPtr Slider::Clone() const
 {

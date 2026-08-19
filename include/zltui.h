@@ -658,6 +658,7 @@ struct Slider : Win
     Point content_length = { 0,0 };
     Color color_track = COLOR_TRACK;
     Color color_thumb = COLOR_THUMB;
+    int scroll_speed = 3;
 };
 
 using SliderPtr = std::shared_ptr<Slider>;
