@@ -163,6 +163,7 @@ struct Rect {
 
     int width() const { return x2 - x + 1; }
     int height() const { return y2 - y + 1; }
+    Point size() const { return { x2 - x + 1 , y2 - y + 1 }; }
     void set(int _x, int _y, int _x2, int _y2) { x = _x; y = _y; x2 = _x2; y2 = _y2; }
     Rect move(int ox, int oy) const { return { x + ox, y + oy, x2 + ox, y2 + oy }; }
     Rect expand(int ox, int oy) const { return { x - ox, y - oy, x2 + ox, y2 + oy }; }
@@ -645,8 +646,10 @@ struct Slider : Win
     void Event(const TUI::Event& ev) override;
     Point GetClipPos() const override;
     virtual void PaintScrollBar(DrawBuffer& drawbuf);
+    virtual int ScrollTo(int percent);  // 0~100 percent
     void Copy(const Win* ob) override;
     WinPtr Clone() const override;
+    void AddChild(WinPtr obj) override;
 
     bool is_scroll_x = false;
     bool is_scroll_y = true;

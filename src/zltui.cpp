@@ -2425,7 +2425,7 @@ bool Win::ParseCmd(const std::string &cmd, EditLine& el)
         name = el.tok();
     }
     else if (eqi(cmd, "Title")) {
-        title = el.tok();
+        title = ParseText(el.tok_line());
     }
     else if (eqi(cmd, "Rect")) {
         local.x = el.tok_int();
@@ -2540,11 +2540,11 @@ void Win::CalRect(Win* parent)
     }
     if (dock_.mode & Dock_Right_Pane) {
         local.x2 = (pw - 1) * dock_.dock.x2 / 100 + dock_.offset.x2;
-        local.x = local.x2 - lw;
+        local.x = local.x2 - (lw - 1);
     }
     if (dock_.mode & Dock_Down_Pane) {
         local.y2 = (ph - 1) * dock_.dock.y2 / 100 + dock_.offset.y2;
-        local.y = local.y2 - lh;
+        local.y = local.y2 - (lh - 1);
     }
 
     auto textSize = GetTextSize();
@@ -3408,6 +3408,20 @@ Point Slider::GetClipPos() const
     return { clip.x - scroll_value.x, clip.y - scroll_value.y };
 }
 
+int Slider::ScrollTo(int percent)
+{
+    int value = 0;
+    if (is_scroll_x) {
+        scroll_value.x = scroll_max.x * percent / 100;
+        value = scroll_value.x;
+    }
+    if (is_scroll_y) {
+        scroll_value.y = scroll_max.y * percent / 100;
+        value = scroll_value.y;
+    }
+    return value;
+}
+
 void Slider::Copy(const Win* ob)
 {
     Win::Copy(ob);
@@ -3425,6 +3439,17 @@ WinPtr Slider::Clone() const
     Slider* ob = new Slider(mgr);
     ob->Copy(this);
     return WinPtr(ob);
+}
+
+void Slider::AddChild(WinPtr obj)
+{
+    Win::AddChild(obj);
+    if (is_scroll_x) {
+        scroll_max.x = std::max(scroll_max.x, obj->local.x2 + 1 - clip.width());
+    }
+    if (is_scroll_y) {
+        scroll_max.y = std::max(scroll_max.y, obj->local.y2 + 1 - clip.height());
+    }
 }
 
 ///
