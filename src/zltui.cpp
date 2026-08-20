@@ -903,7 +903,7 @@ void DrawBuffer::Text(const Point& pos, const TUI::RichText& text)
 
     for (size_t i = 0; i < text.chars.size(); ++i) {
         const auto& ch = text.chars[i];
-        if (ch.ch == '\\n')
+        if (ch.ch == '\n')
             continue;
 
         const auto& pt = text.position[i];
@@ -1941,7 +1941,7 @@ static void emit_linux_input(Event& ev, uint32_t cp)
         ev.type = EventType_Key;
         ev.key = cp;
         ev.alt = true;
-        s_events.push_back(ev);
+        Terminal::s_events.push_back(ev);
         ev.reset();
         return;
     }
@@ -1955,7 +1955,7 @@ static void emit_linux_input(Event& ev, uint32_t cp)
                 // button so Mgr can continue drag operations, while motion
                 // with no button remains a hover event.
                 ev.button = held_button;
-                s_events.push_back(ev);
+                Terminal::s_events.push_back(ev);
                 ev.reset();
                 return;
             }
@@ -1970,7 +1970,7 @@ static void emit_linux_input(Event& ev, uint32_t cp)
                     held_button = 0;
                 }
             }
-            s_events.push_back(ev);
+            Terminal::s_events.push_back(ev);
             ev.reset();
         }
         return;
@@ -2001,7 +2001,7 @@ static void emit_linux_input(Event& ev, uint32_t cp)
         ev.key = cp;
     }
 
-    s_events.push_back(ev);
+    Terminal::s_events.push_back(ev);
     ev.reset();
 }
 
@@ -2015,7 +2015,7 @@ static void flush_linux_escape(Event& ev)
     ev.type = EventType_Key;
     ev.key = '\x1b';
     ev.vkey = VK_ESCAPE;
-    s_events.push_back(ev);
+    Terminal::s_events.push_back(ev);
     ev.reset();
 }
 
@@ -2110,7 +2110,7 @@ void Terminal::event_thread()
 
         for (ssize_t i = 0; i < count; ++i) {
             decoder.feed(buffer[i], [&ev](uint32_t cp) {
-                Terminal::emit_linux_input(ev, cp);
+                emit_linux_input(ev, cp);
             });
         }
 

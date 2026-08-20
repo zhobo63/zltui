@@ -389,6 +389,7 @@ private:
     int current_drawbuffer = 0;
     DrawBuffer drawbuffers[2];
 
+public:
     /// Whether the watcher thread should keep running.
     static std::atomic<bool> s_running;
     static std::thread* s_event_thread;
