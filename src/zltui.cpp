@@ -3636,6 +3636,39 @@ static bool TextEvent(
     return change;
 }
 
+// Keep the active text cursor inside the widget viewport.  Edit and RichEdit
+// share the same cursor coordinates and scrolling rules.
+static void KeepCursorVisible(Slider& slider, const Point& cursor)
+{
+    Point old_scroll = slider.scroll_value;
+    const int visible_width = std::max(1, slider.clip.width());
+    const int visible_height = std::max(1, slider.clip.height());
+
+    if (slider.is_scroll_x) {
+        if (cursor.x < slider.scroll_value.x)
+            slider.scroll_value.x = cursor.x;
+        else if (cursor.x >= slider.scroll_value.x + visible_width)
+            slider.scroll_value.x = cursor.x - visible_width + 1;
+        slider.scroll_value.x = std::clamp(slider.scroll_value.x, 0, slider.scroll_max.x);
+    }
+    if (slider.is_scroll_y) {
+        if (cursor.y < slider.scroll_value.y)
+            slider.scroll_value.y = cursor.y;
+        else if (cursor.y >= slider.scroll_value.y + visible_height)
+            slider.scroll_value.y = cursor.y - visible_height + 1;
+        slider.scroll_value.y = std::clamp(slider.scroll_value.y, 0, slider.scroll_max.y);
+    }
+
+    if (slider.mgr) {
+        if (old_scroll != slider.scroll_value)
+            slider.mgr->is_dirty = true;
+        slider.mgr->cursor = {
+            slider.clip.x + cursor.x - slider.scroll_value.x,
+            slider.clip.y + cursor.y - slider.scroll_value.y
+        };
+    }
+}
+
 Edit::Edit(Mgr* mgr) :Slider(mgr) {
     color_selected = COLOR_SELECTED;
     is_notifiable = true;
@@ -3714,11 +3747,14 @@ void Edit::setText(const std::string& _text)
 void Edit::Event(const TUI::Event& ev)
 {
     Slider::Event(ev);
+    auto old_cursor = cursor;
     if (TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev)) {
         if (on_edit) {
             on_edit(this, text);
         }
     }
+    if (old_cursor != cursor)
+        KeepCursorVisible(*this, cursor);
 }
 
 void Edit::Copy(const Win* ob)
@@ -4049,11 +4085,14 @@ void RichEdit::setText(const std::string& _text)
 void RichEdit::Event(const TUI::Event& ev)
 {
     Slider::Event(ev);
+    auto old_cursor = cursor;
     if (TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev)) {
         if (on_edit) {
             on_edit(this, text);
         }
     }
+    if (old_cursor != cursor)
+        KeepCursorVisible(*this, cursor);
 }
 
 void RichEdit::Copy(const Win* ob)

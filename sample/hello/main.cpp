@@ -50,7 +50,7 @@ Object Label
     Rect 0 0 100 2
     Text  ZLTUI COMPONENT GALLERY   |   interactive terminal UI examples
     Bold true
-    FgColor RGB(76,201,190)
+    FgColor RGB(76,201,255)
     BgColor RGB(18, 28, 40)
 }
 Object Slider
@@ -60,8 +60,8 @@ Object Slider
     DrawBorder true
     BorderStyle Single
     Title Navigation
-    FgColor RGB(235,190,95)
-    BgColor RGB(23, 34, 47)
+    FgColor RGB(115,205,255)
+    BgColor RGB(22,35,43)
     Dock down 23 0 100 100
     DockOffset 0 0 0 -4
 }
@@ -86,15 +86,15 @@ Object Edit
     Title Command (Enter to run, /q to quit)
     Dock Right|DownPane 0 0 100 100
     DockOffset 0 0 0 -1
-    FgColor RGB(115,205,155)
-    BgColor RGB(22,35,43)
+    FgColor RGB(235,190,95)
+    BgColor RGB(23, 34, 47)
     ScrollY false
 }
 Object Label
 {
     Name footer
     Rect 0 31 100 31
-    Text  Tab/arrow keys navigate   |   Enter activates   |   Ctrl+C exits
+    Text  Tab/arrow keys navigate   |   Enter activates   |   F4 exits
     FgColor RGB(125,150,165)
     Dock downpane 0 0 100 100
     //Visible false
@@ -313,6 +313,18 @@ TUI::Markdown(edit, markdown);
                 quit = true;
             } else if (!commandLine->text.empty()) {
                 commandStatus->setText("Last command: " + commandLine->text);
+                if (commandLine->text == "1") {
+                    SetVisible(pages, pages[0], mgr);
+                }
+                else if (commandLine->text == "2") {
+                    SetVisible(pages, pages[1], mgr);
+                }
+                else if (commandLine->text == "3") {
+                    SetVisible(pages, pages[2], mgr);
+                }
+                else if (commandLine->text == "4") {
+                    SetVisible(pages, pages[3], mgr);
+                }
             }
             commandLine->setText("");
             mgr.is_dirty = true;
@@ -329,6 +341,9 @@ TUI::Markdown(edit, markdown);
         else if (!ev.ctrl && !ev.shift && ev.key == VK_RETURN) {
             if(mgr.notify_)
                 commandStatus->setText("Enter: " + mgr.notify_->name);
+        }
+        else if (ev.vkey == VK_F4) {
+            quit = true;
         }
         return false;
         };
