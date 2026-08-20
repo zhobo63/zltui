@@ -1,4 +1,6 @@
 ﻿#include "zltui.h"
+#include <algorithm>
+#include <iterator>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -2777,6 +2779,7 @@ void Win::PaintChild(DrawBuffer& drawbuf)
         ch->CalRect(this);
         if (!clip.collide(ch->screen))
             continue;
+        mgr->paint_list.push_back(ch);
         ch->Paint(drawbuf);
     }
     drawbuf.PopClip();
@@ -2882,6 +2885,12 @@ WinPtr Win::Clone() const
     Win *ob = new Win(mgr);
     ob->Copy(this);
     return WinPtr(ob);
+}
+
+void Win::SetVisible(bool visible)
+{
+    is_visible = visible;
+    mgr->is_dirty = true;
 }
 
 /// <summary>
@@ -3021,7 +3030,7 @@ void Button::PaintBorder(DrawBuffer& drawbuf)
     if (is_down) {
         bg = bg_color_down;
     }
-    else if (mgr->hover_.get() == this) {
+    else if (mgr->hover_.get() == this || mgr->notify_.get() == this) {
         bg = bg_color_hover;
     }
     if (draw_border) {
@@ -3187,15 +3196,21 @@ void Combo::Click()
         menu->local = { screen.x, screen.y + 1, screen.x2, screen.y + item_count + 2 };
     }
     int w = screen.width() - 3;
+    ButtonPtr first_btn = nullptr;
     for (int i = 0; i < items.size(); i++) {
-        ButtonPtr btn = menu->Create<Button>("COMBO_MENU_ITEM", { 0, i, w, i });
+        ButtonPtr btn = menu->Create<Button>("COMBO_MENU_ITEM_" + std::to_string(i), {0, i, w, i});
         btn->setText(items[i]);
         btn->on_click = [&, i]() {
             SetValue(i);
             mgr->ClosePopup();
             };
+        if (!first_btn) {
+            first_btn = btn;
+        }
     }
     mgr->Popup(menu);
+    mgr->SetNotify(first_btn);
+    mgr->hover_slider_ = menu;
 }
 
 void Combo::Copy(const Win* ob)
@@ -3841,7 +3856,7 @@ void LabelEdit::Input(const std::string& _label, uint32_t& value, uint32_t step,
         }
         };
     int w = local.width() - label_width;
-    ButtonPtr sub = Create<TUI::Button>("-", { w - 6, 0, w - 4, 0 });
+    ButtonPtr sub = Create<TUI::Button>(name + "-", { w - 6, 0, w - 4, 0 });
     sub->is_cloneable = false;
     sub->setText("-");
     sub->on_click = [&, step]() {
@@ -3850,7 +3865,7 @@ void LabelEdit::Input(const std::string& _label, uint32_t& value, uint32_t step,
             setText(std::to_string(value));
         }
         };
-    ButtonPtr add = Create<TUI::Button>("+", { w - 3, 0, w - 1, 0 });
+    ButtonPtr add = Create<TUI::Button>(name + "+", { w - 3, 0, w - 1, 0 });
     add->is_cloneable = false;
     add->setText("+");
     add->on_click = [&, step]() {
@@ -3861,15 +3876,16 @@ void LabelEdit::Input(const std::string& _label, uint32_t& value, uint32_t step,
 void LabelEdit::Button(const std::string& _label, const std::string& value, fn_click onclick)
 {
     label = _label;
-    ButtonPtr btn = Create<TUI::Button>("+", { 0, 0, local.width() - label_width - 1, 0 });
+    ButtonPtr btn = Create<TUI::Button>(name + "<BUTTON>", { 0, 0, local.width() - label_width - 1, 0 });
     btn->setText(value);
     btn->is_cloneable = false;
     btn->on_click = onclick;
+    is_notifiable = false;
 }
 void LabelEdit::Check(const std::string& _label, bool& value, const Check::CheckText& check_text, Check::fn_check oncheck)
 {
     label = _label;
-    CheckPtr chk = Create<TUI::Check>("", { 0, 0, local.width() - label_width - 1, 0 });
+    CheckPtr chk = Create<TUI::Check>(name + "<CHECK>", { 0, 0, local.width() - label_width - 1, 0 });
     chk->check_text = check_text;
     chk->is_cloneable = false;
     chk->SetChecked(value);
@@ -3879,12 +3895,13 @@ void LabelEdit::Check(const std::string& _label, bool& value, const Check::Check
             oncheck(value);
         }
         };
+    is_notifiable = false;
 }
 
 void LabelEdit::Combo(const std::string& _label, int& value, const std::vector<std::string>& items, Combo::fn_selected onselect)
 {
     label = _label;
-    ComboPtr cbo = Create<TUI::Combo>("", { 0, 0, local.width() - label_width - 1, 0 });
+    ComboPtr cbo = Create<TUI::Combo>(name + "COMBO", {0, 0, local.width() - label_width - 1, 0});
     cbo->items = items;
     cbo->SetValue(value);
     cbo->is_cloneable = false;
@@ -3894,6 +3911,7 @@ void LabelEdit::Combo(const std::string& _label, int& value, const std::vector<s
             onselect(_value);
         }
         };
+    is_notifiable = false;
 }
 
 /// <summary>
@@ -4573,6 +4591,12 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
 /// Mgr
 /// </summary>
 
+Mgr::Mgr() :Win(this) 
+{
+    paint_list.reserve(256);
+    draw_border = false; 
+}
+
 WinPtr Mgr::CreateByID(std::string csid, Mgr* mgr)
 {
     Win* ob = nullptr;
@@ -4630,6 +4654,10 @@ bool Mgr::Update(Terminal& terminal)
 
     for (auto& ev : events) {
         if (ev.type == EventType_Key || ev.type == EventType_Paste) {
+            Navigator(ev);
+            if (on_key) {
+                on_key(ev);
+            }
             if (notify_) {
                 notify_->Event(ev);
             }
@@ -4644,18 +4672,13 @@ bool Mgr::Update(Terminal& terminal)
             if (notify) {
                 if (notify != notify_) {
                     if (first_down) {
-                        if (notify_) {
-                            notify_->is_notify = false;
-                        }
                         notify_ = notify;
-                        notify_->is_notify = true;
 
                         if (popup_) { ClosePopup(); }
                     }
                     is_dirty = true;
                 }
                 else if (first_down) {
-                    notify->is_notify = true;
                     is_dirty = true;
                 }
                 if (notify->is_down != any_down) {
@@ -4688,6 +4711,7 @@ bool Mgr::Update(Terminal& terminal)
 }
 void Mgr::Paint(DrawBuffer& drawbuf)
 {
+    paint_list.resize(0);
     Win::Paint(drawbuf);
     is_dirty = false;
 }
@@ -4706,6 +4730,76 @@ void Mgr::ClosePopup()
         RemoveChild(popup_);
         popup_ = nullptr;
         is_dirty = true;
+    }
+}
+
+WinPtr Mgr::NextNotify()
+{
+    if (paint_list.empty())
+        return nullptr;
+
+    // Paint order is also the order used for keyboard focus navigation.  A
+    // widget may disappear between frames, so start from the beginning when
+    // the current focus is not in the latest paint list.
+    size_t start = 0;
+    if (notify_) {
+        auto current = std::find(paint_list.begin(), paint_list.end(), notify_);
+        if (current != paint_list.end()) {
+            start = static_cast<size_t>(std::distance(paint_list.begin(), current) + 1) % paint_list.size();
+        }
+    }
+
+    // Wrap around so Tab navigation never gets stuck at the end of the list.
+    for (size_t offset = 0; offset < paint_list.size(); ++offset) {
+        const auto& candidate = paint_list[(start + offset) % paint_list.size()];
+        if (candidate && candidate->is_visible && candidate->is_notifiable)
+            return candidate;
+    }
+    return nullptr;
+}
+
+void Mgr::SetNotify(WinPtr ob)
+{
+    if (!ob || ob == notify_)
+        return;
+    notify_ = ob;
+    hover_slider_ = GetSlider({ ob->clip.x, ob->clip.y });
+    is_dirty = true;
+}
+
+void Mgr::Navigator(const TUI::Event& ev)
+{
+    if (ev.ctrl || ev.shift)
+        return;
+
+    if (ev.key == VK_TAB) {
+        SetNotify(NextNotify());
+    }
+    else if (ev.key == VK_RETURN) {
+        if (notify_)
+            notify_->Click();
+    }
+    else if ((ev.vkey == VK_UP || ev.vkey == VK_DOWN) && hover_slider_ && notify_) {
+        // Arrow navigation is local to the slider under the mouse.  This keeps
+        // a form or list usable without moving focus to another panel.
+        auto& children = hover_slider_->child;
+        auto current = std::find(children.begin(), children.end(), notify_);
+        if (current == children.end() || children.empty())
+            return;
+
+        const bool down = ev.vkey == VK_DOWN;
+        const size_t count = children.size();
+        const size_t current_index = static_cast<size_t>(std::distance(children.begin(), current));
+        for (size_t offset = 1; offset <= count; ++offset) {
+            const size_t index = down
+                ? (current_index + offset) % count
+                : (current_index + count - (offset % count)) % count;
+            const auto& candidate = children[index];
+            if (candidate && candidate->is_visible && candidate->is_notifiable) {
+                SetNotify(candidate);
+                return;
+            }
+        }
     }
 }
 

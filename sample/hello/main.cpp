@@ -270,7 +270,7 @@ TUI::Markdown(edit, markdown);
                     populateFiles();
                 } else {
                     commandLine->setText(commandLine->text + path.string());
-                    mgr.notify_ = commandLine;
+                    mgr.SetNotify(commandLine);
                 }
             };
             ++y;
@@ -320,7 +320,19 @@ TUI::Markdown(edit, markdown);
         }
         return false;
     };
-    mgr.notify_ = commandLine;
+    mgr.on_key = [&](const Event& ev) -> bool {
+        if (!ev.ctrl && !ev.shift && ev.key == VK_TAB) {
+            if (mgr.notify_) {
+                commandStatus->setText("Notify: " + mgr.notify_->name);
+            }
+        }
+        else if (!ev.ctrl && !ev.shift && ev.key == VK_RETURN) {
+            if(mgr.notify_)
+                commandStatus->setText("Enter: " + mgr.notify_->name);
+        }
+        return false;
+        };
+    mgr.SetNotify(commandLine);
 
     while (!quit) {
         if (mgr.Update(terminal)) {

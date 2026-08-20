@@ -505,6 +505,7 @@ struct Win
     virtual void Event(const Event& ev) {}
     virtual Point GetClipPos() const;
     virtual Point GetTextSize() const { return { 0,0 }; }
+    virtual void SetVisible(bool visible);
 
     template<class T>
     std::shared_ptr<T> GetUI(const char* name) {
@@ -523,7 +524,6 @@ struct Win
     std::string title = "";
     bool is_visible = true;
     bool is_notifiable = true;
-    bool is_notify = false;
     bool is_down = false;
     bool draw_border = false;
     bool is_cloneable = true;
@@ -543,7 +543,10 @@ struct Win
     Mgr* mgr = nullptr;
     
     using fn_click = std::function<void()>;
+    using fn_key = std::function<bool(const TUI::Event& evt)>;
+
     fn_click on_click;
+    fn_key on_key;
 
     static Color COLOR_BG;
     static Color COLOR_HOVER;
@@ -682,10 +685,7 @@ struct Edit : Slider, Text
     int drag_start = -1;  // character index where drag selection started
     bool readonly = false;
 
-    using fn_key = std::function<bool(const TUI::Event& evt)>;
-    using fn_edit = std::function<void (Edit* edit, const std::string& text)>;
-    
-    fn_key on_key;
+    using fn_edit = std::function<void (Edit* edit, const std::string& text)>;    
     fn_edit on_edit;
 };
 
@@ -741,9 +741,7 @@ struct RichEdit : Slider, RichText
     int drag_start = -1;
     bool readonly = false;
 
-    using fn_key = std::function<bool(const TUI::Event& evt)>;
     using fn_edit = std::function<void(RichEdit* edit, const std::string& text)>;
-    fn_key on_key;
     fn_edit on_edit;
     RichText::Style current_style;
 };
@@ -786,12 +784,15 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& style 
 
 struct Mgr : Win
 {
-    Mgr() :Win(this) { draw_border = false; }
+    Mgr();
     bool Parse(std::string content);
     bool Update(Terminal& terminal);
     void Paint(DrawBuffer& drawbuf) override;
     void Popup(WinPtr ob);
     void ClosePopup();
+    WinPtr NextNotify();
+    void SetNotify(WinPtr ob);
+    void Navigator(const TUI::Event &ev);
 
     bool is_dirty = true;
     WinPtr notify_ = nullptr;     //input focus
@@ -799,6 +800,7 @@ struct Mgr : Win
     WinPtr hover_slider_ = nullptr;
     WinPtr popup_ = nullptr;
     Point cursor;
+    std::vector<WinPtr> paint_list;
 
     static WinPtr CreateByID(std::string csid, Mgr *mgr);
 };
