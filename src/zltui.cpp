@@ -3738,6 +3738,7 @@ void Edit::setText(const std::string& _text)
     Text::setText(_text, local.width());
     selected.unselect();
     cursor = { 0,0 };
+    KeepCursorVisible(*this, cursor);
     mgr->is_dirty = true;
     if (on_edit) {
         on_edit(this, _text);
@@ -4080,6 +4081,12 @@ void RichEdit::setText(const std::string& _text)
     if (on_edit) {
         on_edit(this, _text);
     }
+}
+
+void RichEdit::appendText(const std::string& _text, const Style& style)
+{
+    RichText::appendText(_text, style);
+    mgr->is_dirty = true;
 }
 
 void RichEdit::Event(const TUI::Event& ev)

@@ -271,7 +271,7 @@ struct RichText: Text
     int del(int idx) override;
     int insert(int idx, const std::string text) override;
 
-    void appendText(const std::string& _text, const Style &style);
+    virtual void appendText(const std::string& _text, const Style &style);
 
     static Style RichTextStyle(const Color& fg, const Color& bg = AnsiColor_Unused, bool bold = false, bool italic = false, bool underline = false);
 };
@@ -733,6 +733,7 @@ struct RichEdit : Slider, RichText
     void Paint(DrawBuffer& drawbuf) override;
     void PaintText(DrawBuffer& drawbuf);
     void setText(const std::string& _text);
+    void appendText(const std::string& _text, const Style& style) override;
     void Event(const TUI::Event& ev) override;
     void Copy(const Win* ob) override;
     WinPtr Clone() const override;
