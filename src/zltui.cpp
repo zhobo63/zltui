@@ -254,6 +254,7 @@ Color Color::Parse(const std::string& param)
         {"BrightMagenta", AnsiColor_Bright_Magenta},
         {"BrightCyan",    AnsiColor_Bright_Cyan},
         {"BrightWhite",   AnsiColor_Bright_White},
+        {"Unused",        AnsiColor_Unused},
     };
 
     for (auto& n : names) {
@@ -1335,7 +1336,6 @@ static bool parse_sgr_mouse(Event& ev)
     return true;
 }
 
-
 bool Event::parse_sequence(uint32_t ch)
 {
     if (is_paste_bracket) {
@@ -1350,6 +1350,15 @@ bool Event::parse_sequence(uint32_t ch)
     }
 
     seq.push_back(static_cast<char>(ch));
+
+    // ESC followed by anything other than '[' or 'O' is an Alt+Key
+    // sequence, not a VT control sequence.
+    //if (seq.size() == 2 && ch != '[' && ch != 'O') {
+    //    type = EventType_Key;
+    //    key = ch;
+    //    alt = true;
+    //    return true;
+    //}
 
     if (seq.size() == 1)
         return true;
@@ -1738,7 +1747,7 @@ static uint32_t map_key_event(const KEY_EVENT_RECORD& key, Event &ev)
     }
 
     switch (key.wVirtualKeyCode) {
-    //case VK_ESCAPE:  return 0x1B;
+    case VK_ESCAPE:  return 0x1B;
     //case VK_RETURN:  return '\n';
     //case VK_BACK:    return '\b';
     case VK_TAB:     return '\t';
@@ -1756,17 +1765,49 @@ void Terminal::event_thread()
     DWORD prev_btn_state = 0;
 
     Event ev;
+    auto flush_escape = [&]() {
+        if (!ev.is_vt || ev.seq != "\x1b")
+            return;
+
+        ev.reset();
+        ev.type = EventType_Key;
+        ev.key = '\x1b';
+        ev.vkey = VK_ESCAPE;
+        {
+            std::lock_guard<std::mutex> lock(s_event_mutex);
+            s_events.push_back(ev);
+        }
+        ev.reset();
+    };
+
     while (s_running.load()) {
-        ReadConsoleInputW(hIn, &rec, 1, &count);
+        // ESC is also the prefix of every VT sequence. Give a lone ESC a
+        // short window to receive its possible sequence continuation.
+        DWORD wait_ms = (ev.is_vt && ev.seq == "\x1b") ? 50 : INFINITE;
+        DWORD wait_result = WaitForSingleObject(hIn, wait_ms);
+        if (wait_result == WAIT_TIMEOUT) {
+            flush_escape();
+            continue;
+        }
+        if (wait_result != WAIT_OBJECT_0)
+            break;
+
+        if (!ReadConsoleInputW(hIn, &rec, 1, &count) || count == 0)
+            continue;
+
+        if (ev.is_vt && ev.seq == "\x1b" && rec.EventType != KEY_EVENT) {
+            flush_escape();
+        }
+
         if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown) {
-            // Try to parse VT/ANSI escape sequences first.
-            bool vt_parsed = ev.parse_sequence(rec.Event.KeyEvent.uChar.UnicodeChar);
+            const auto& key_event = rec.Event.KeyEvent;
+            bool vt_parsed = ev.parse_sequence(key_event.uChar.UnicodeChar);
 
             if (!vt_parsed) {
                 ev.type = EventType_Key;
-                ev.vkey = rec.Event.KeyEvent.wVirtualKeyCode;
+                ev.vkey = key_event.wVirtualKeyCode;
                 ev.key = map_key_event(rec.Event.KeyEvent, ev);
-                auto& cks = rec.Event.KeyEvent.dwControlKeyState;
+                auto& cks = key_event.dwControlKeyState;
                 ev.shift = (cks & SHIFT_PRESSED) != 0;
                 ev.ctrl = (cks & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
                 ev.alt = (cks & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
@@ -2565,6 +2606,10 @@ void Win::CalRect(Win* parent)
         local.y2 = local.y + textSize.y;
         break;
     }
+    if (local.width() != lw || local.height() != lh) {
+        OnSize();
+        mgr->is_dirty = true;
+    }
 
     screen = local.move(pt.x, pt.y);
     if (draw_border && border_style != BorderStyle_None) {
@@ -2790,7 +2835,7 @@ void Win::PaintBorder(DrawBuffer& drawbuf)
     if (draw_border) {
         drawbuf.Border(screen, bg_color, border_style, fg_color);
         if (!title.empty()) {
-            drawbuf.Text(title, { screen.x + 1, screen.y }, fg_color);
+            drawbuf.Text(" " + title + " ", { screen.x + 1, screen.y }, fg_color);
         }
     }
 }
@@ -2967,14 +3012,20 @@ void Label::setText(const std::string& _text)
         auto textSize = GetTextSize();
         switch (autosize_) {
         case Autosize_TextWidth:
-            local.x2 = local.x + textSize.x;
+            if (local.x2 != local.x + textSize.x) {
+                local.x2 = local.x + textSize.x;
+                Text::setText(_text, local.width());
+            }
             break;
         case Autosize_TextHeight:
             local.y2 = local.y + textSize.y;
             break;
         case Autosize_TextSize:
-            local.x2 = local.x + textSize.x;
             local.y2 = local.y + textSize.y;
+            if (local.x2 != local.x + textSize.x) {
+                local.x2 = local.x + textSize.x;
+                Text::setText(_text, local.width());
+            }
             break;
         }
     }
@@ -3745,6 +3796,11 @@ void Edit::setText(const std::string& _text)
     }
 }
 
+void Edit::OnSize()
+{
+    Text::setText(text, local.width());
+}
+
 void Edit::Event(const TUI::Event& ev)
 {
     Slider::Event(ev);
@@ -4087,6 +4143,11 @@ void RichEdit::appendText(const std::string& _text, const Style& style)
 {
     RichText::appendText(_text, style);
     mgr->is_dirty = true;
+}
+
+void RichEdit::OnSize()
+{
+    Text::setText(text, local.width());
 }
 
 void RichEdit::Event(const TUI::Event& ev)
@@ -4637,10 +4698,10 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
 /// Mgr
 /// </summary>
 
-Mgr::Mgr() :Win(this) 
+Mgr::Mgr() :Win(this)
 {
     paint_list.reserve(256);
-    draw_border = false; 
+    draw_border = false;
 }
 
 WinPtr Mgr::CreateByID(std::string csid, Mgr* mgr)
@@ -4757,9 +4818,9 @@ bool Mgr::Update(Terminal& terminal)
 }
 void Mgr::Paint(DrawBuffer& drawbuf)
 {
+    is_dirty = false;
     paint_list.resize(0);
     Win::Paint(drawbuf);
-    is_dirty = false;
 }
 
 void Mgr::Popup(WinPtr ob)

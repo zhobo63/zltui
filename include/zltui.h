@@ -506,6 +506,7 @@ struct Win
     virtual Point GetClipPos() const;
     virtual Point GetTextSize() const { return { 0,0 }; }
     virtual void SetVisible(bool visible);
+    virtual void OnSize() {}
 
     template<class T>
     std::shared_ptr<T> GetUI(const char* name) {
@@ -677,6 +678,7 @@ struct Edit : Slider, Text
     void Paint(DrawBuffer& drawbuf) override;
     virtual void PaintText(DrawBuffer& drawbuf);
     void setText(const std::string& _text);
+    void OnSize() override;
     void Event(const TUI::Event& ev) override;
     void Copy(const Win* ob) override;
     WinPtr Clone() const override;
@@ -734,9 +736,11 @@ struct RichEdit : Slider, RichText
     void PaintText(DrawBuffer& drawbuf);
     void setText(const std::string& _text);
     void appendText(const std::string& _text, const Style& style) override;
+    void OnSize() override;
     void Event(const TUI::Event& ev) override;
     void Copy(const Win* ob) override;
     WinPtr Clone() const override;
+
 
     Point cursor;
     int drag_start = -1;
