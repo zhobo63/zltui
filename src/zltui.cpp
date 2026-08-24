@@ -32,23 +32,39 @@ NAMESPACE_BEGIN(TUI)
 static int utf8_char_width(uint32_t cp) {
     if (cp < 0x20 || (cp >= 0x7F && cp < 0xA0)) return 0; // control chars
     if (cp < 0x1100) return 1;
-    // CJK, Hangul, etc. — wide characters
+    // Variation selectors modify the preceding character and occupy no cell.
+    if ((cp >= 0xFE00 && cp <= 0xFE0F) ||
+        (cp >= 0xE0100 && cp <= 0xE01EF)) {
+        return 0;
+    }
+
+    // CJK, Hangul, fullwidth forms, and other East Asian wide characters.
     if ((cp >= 0x1100 && cp <= 0x115F) ||   // Hangul Jamo
-        (cp >= 0x2600 && cp <= 0x26FF) ||   // Misc symbols (☀ ☮ ♠)
+        (cp >= 0x231A && cp <= 0x231B) ||   // Watch, hourglass
+        (cp >= 0x2329 && cp <= 0x232A) ||   // Angle brackets
+        (cp >= 0x23E9 && cp <= 0x23EC) ||   // Fast-forward / reverse
+        (cp == 0x23F0) || (cp == 0x23F3) ||
+        (cp >= 0x25FD && cp <= 0x25FE) ||
+        (cp >= 0x2600 && cp <= 0x26FF) ||   // Misc symbols
         (cp >= 0x2700 && cp <= 0x27BF) ||   // Dingbats
-        (cp >= 0x2E80 && cp <= 0xA4CF) ||   // CJK radicals, Kangxi, etc.
+        (cp >= 0x2B00 && cp <= 0x2BFF) ||   // Misc symbols and arrows
+        (cp >= 0x2E80 && cp <= 0xA4CF) ||   // CJK radicals, Kangxi, Yi
+        (cp >= 0xA960 && cp <= 0xA97F) ||   // Hangul Jamo Extended-A
         (cp >= 0xAC00 && cp <= 0xD7A3) ||   // Hangul syllables
+        (cp >= 0xD7B0 && cp <= 0xD7FF) ||   // Hangul Jamo Extended-B
         (cp >= 0xF900 && cp <= 0xFAFF) ||   // CJK compatibility
-        (cp >= 0xFE00 && cp <= 0xFE0F) ||   // Variation Selectors
-        (cp >= 0xFE10 && cp <= 0xFE6F) ||   // Vertical forms, small forms
-        (cp >= 0xFF00 && cp <= 0xFF60) ||   // Fullwidth ASCII variants
-        (cp >= 0xFFE0 && cp <= 0xFFE6)) {
+        (cp >= 0xFE10 && cp <= 0xFE6F) ||   // Vertical and small forms
+        (cp >= 0xFF01 && cp <= 0xFF60) ||   // Fullwidth ASCII variants
+        (cp >= 0xFFE0 && cp <= 0xFFE6) ||   // Fullwidth currency forms
+        (cp >= 0x20000 && cp <= 0x3FFFD)) { // CJK Extensions
         return 2;
     }
-    // Emoji — typically double-width in terminals
-    if ((cp >= 0x1F300 && cp <= 0x1F9FF) ||   // Misc Symbols & Pictographs, Emoticons
-        (cp >= 0x1FA00 && cp <= 0x1FA6F) ||   // Chess symbols
-        (cp >= 0x1FA70 && cp <= 0x1FAFF)) {   // Extended-A (chess, dominoes, etc.)
+
+    // Emoji and pictographs are conventionally double-width in terminals.
+    if ((cp >= 0x1F004 && cp <= 0x1F0CF) ||
+        (cp >= 0x1F18E && cp <= 0x1F19A) ||
+        (cp >= 0x1F1E6 && cp <= 0x1F1FF) ||
+        (cp >= 0x1F300 && cp <= 0x1FAFF)) {
         return 2;
     }
     return 1;
