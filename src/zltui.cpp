@@ -4708,6 +4708,7 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
         if (line_index + 1 < lines.size())
             edit->appendText("\n", markdown_style.text);
     }
+    // TODO check scroll value
 }
 
 /// <summary>
