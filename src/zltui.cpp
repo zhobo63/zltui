@@ -3380,10 +3380,10 @@ void Slider::PaintScrollBar(DrawBuffer& drawbuf)
     }
 }
 
-void Slider::Event(const TUI::Event& ev)
+bool Slider::Event(const TUI::Event& ev)
 {
     if (mgr->hover_slider_.get() != this)
-        return;
+        return false;
     Point pt = { ev.x, ev.y };
     Point old_scroll_value = scroll_value;
     bool any_click = ev.any_button_down();
@@ -3429,6 +3429,19 @@ void Slider::Event(const TUI::Event& ev)
                 }
             }
         }
+    }
+
+    switch (ev.vkey) {
+    case VK_PRIOR:
+        if (is_scroll_y)
+            scroll_value.y = std::max(0, scroll_value.y - clip.height());
+        break;
+    case VK_NEXT:
+        if (is_scroll_y)
+            scroll_value.y = std::min(scroll_max.y, scroll_value.y + clip.height());
+        break;
+    default:
+        break;
     }
 
     switch (ev.button) {
@@ -3484,8 +3497,14 @@ void Slider::Event(const TUI::Event& ev)
         break;
     }
     if (old_scroll_value != scroll_value) {
+        if (scroll_value.x < 0) scroll_value.x = 0;
+        else if (scroll_value.x > scroll_max.x) scroll_value.x = scroll_max.x;
+        if (scroll_value.y < 0) scroll_value.y = 0;
+        else if (scroll_value.y > scroll_max.y) scroll_value.y = scroll_max.y;
         mgr->is_dirty = true;
+        return true;
     }
+    return false;
 }
 
 Point Slider::GetClipPos() const
@@ -3548,7 +3567,6 @@ static bool TextEvent(
     Point& cursor,
     int& drag_start,
     bool& readonly,
-    std::function<bool(const TUI::Event&)>& on_key,
     const TUI::Event& ev)
 {
     bool change = false;
@@ -3617,9 +3635,6 @@ static bool TextEvent(
 
     int idx = text.cur_idx_of(cursor);
     bool handled = true;
-
-    if (on_key && on_key(ev))
-        return change;
 
     if (ev.vkey == VK_BACK) {
         if (!readonly) {
@@ -3817,17 +3832,22 @@ void Edit::OnSize()
     Text::setText(text, local.width());
 }
 
-void Edit::Event(const TUI::Event& ev)
+bool Edit::Event(const TUI::Event& ev)
 {
-    Slider::Event(ev);
+    bool r = Slider::Event(ev);
     auto old_cursor = cursor;
-    if (TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev)) {
+    if (on_key && on_key(ev))
+        return true;
+
+    if (TextEvent(*this, *this, cursor, drag_start, readonly, ev)) {
         if (on_edit) {
             on_edit(this, text);
         }
+        r = true;
     }
     if (old_cursor != cursor)
         KeepCursorVisible(*this, cursor);
+    return r;
 }
 
 void Edit::Copy(const Win* ob)
@@ -4166,17 +4186,22 @@ void RichEdit::OnSize()
     Text::setText(text, local.width());
 }
 
-void RichEdit::Event(const TUI::Event& ev)
+bool RichEdit::Event(const TUI::Event& ev)
 {
-    Slider::Event(ev);
+    bool r = Slider::Event(ev);
     auto old_cursor = cursor;
-    if (TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev)) {
+    if (on_key && on_key(ev)) {
+        return true;
+    }
+    if (TextEvent(*this, *this, cursor, drag_start, readonly, ev)) {
         if (on_edit) {
             on_edit(this, text);
         }
+        r = true;
     }
     if (old_cursor != cursor)
         KeepCursorVisible(*this, cursor);
+    return r;
 }
 
 void RichEdit::Copy(const Win* ob)
@@ -4712,6 +4737,19 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
 }
 
 /// <summary>
+/// Syntax
+/// </summary>
+
+Syntax Syntax::CPP = {
+    //TODO CPP keyword
+};
+
+void SyntaxText(RichEdit* edit, const std::string& text, const Syntax syntax)
+{
+    //TODO 
+}
+
+/// <summary>
 /// Mgr
 /// </summary>
 
@@ -4778,13 +4816,13 @@ bool Mgr::Update(Terminal& terminal)
 
     for (auto& ev : events) {
         if (ev.type == EventType_Key || ev.type == EventType_Paste) {
+            if (on_key && on_key(ev)) {
+                continue;
+            }
+            if (notify_ && notify_->Event(ev)) {
+                continue;
+            }
             Navigator(ev);
-            if (on_key) {
-                on_key(ev);
-            }
-            if (notify_) {
-                notify_->Event(ev);
-            }
             is_dirty = true;
             continue;
         }
