@@ -156,7 +156,7 @@ int main()
     rich->appendText("Per-character styles: ", normal);
     rich->appendText("success ", green);
     rich->appendText("warning\n", yellow);
-    rich->appendText(u8"UTF-8 / CJK width test:\n", normal);
+    rich->appendText(u8"UTF-8 / CJK width test:✏️\n", normal);
     rich->appendText(u8"中文：你好，世界！全形標點：，。！？\n", green);
     rich->appendText(u8"日本語：こんにちは、世界！カタカナ：テスト\n", yellow);
     rich->appendText(u8"한국어：안녕하세요, 세계! 한글 테스트\n", normal);
