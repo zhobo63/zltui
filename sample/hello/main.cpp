@@ -156,7 +156,7 @@ int main()
     rich->appendText("Per-character styles: ", normal);
     rich->appendText("success ", green);
     rich->appendText("warning\n", yellow);
-    rich->appendText(u8"UTF-8 / CJK width test:\n", normal);
+    rich->appendText(u8"UTF-8 / CJK width test:✏️\n", normal);
     rich->appendText(u8"中文：你好，世界！全形標點：，。！？\n", green);
     rich->appendText(u8"日本語：こんにちは、世界！カタカナ：テスト\n", yellow);
     rich->appendText(u8"한국어：안녕하세요, 세계! 한글 테스트\n", normal);
@@ -281,7 +281,6 @@ TUI::Markdown(edit, markdown);
             for (const auto& entry : std::filesystem::directory_iterator(currentPath)) {
                 addEntry((entry.is_directory() ? u8"📁 " : u8"📄 ") +
                          entry.path().filename().string(), entry.path(), entry.is_directory());
-                if (y > 20) break;
             }
         } catch (const std::filesystem::filesystem_error& error) {
             AddLabel(files, mgr, "error", { 2, y, 70, y + 1 },

@@ -978,9 +978,7 @@ void DrawBuffer::Text(const Point& pos, const TUI::RichText& text)
         //    continue;
 
         const auto& pt = text.position[i];
-        const auto& style = i < text.styles.size()
-            ? text.styles[i]
-            : RichText::Style{};
+        const auto& style = i < text.styles.size() ? text.styles[i] : RichText::Style{};
         int cur_x = pos.x + pt.x;
         int cur_y = pos.y + pt.y;
 
@@ -1008,6 +1006,15 @@ void DrawBuffer::Text(const Point& pos, const TUI::RichText& text)
         if (cell.size > 1) {
             auto& next_cell = cells_[cur_y * width_ + cur_x + 1];
             next_cell.content = "";
+            if (i + 1 < text.chars.size()) {
+                const auto& next_ch = text.chars[i + 1];
+                if (next_ch.char_width == 0 && next_ch.ch >= 0xFE00 && next_ch.ch <= 0xFE0F) {
+                    cell.content += std::string(next_ch.utf8, next_ch.size);
+                }
+            }
+        }
+        else if (cell.size == 0) {
+            cell.size = 0;
         }
     }
 }
@@ -1533,6 +1540,21 @@ void Event::parse_sgr(uint32_t ch)
 /// Terminal
 /// </summary>
 
+static bool is_terminal_control(const std::string& content)
+{
+    if (content.empty())
+        return true;
+
+    uint32_t cp = 0;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(content.data());
+    int n = utf8_mbtowc(cp, bytes, static_cast<int>(content.size()));
+    if (n <= 0)
+        return true;
+
+    // C0 controls, DEL, and C1 controls must not be emitted as terminal text.
+    return cp < 0x20 || cp == 0x7F || (cp >= 0x80 && cp <= 0x9F);
+}
+
 std::atomic<bool> Terminal::s_running = false;
 std::thread* Terminal::s_event_thread = nullptr;
 std::mutex   Terminal::s_event_mutex;
@@ -1550,21 +1572,6 @@ void Terminal::Resize()
     drawbuffers[0].resize(size.x, size.y);
     drawbuffers[1].resize(size.x, size.y);
     //std::cout << ANSI_CLEAR_SCREEN;
-}
-
-static bool is_terminal_control(const std::string& content)
-{
-    if (content.empty())
-        return true;
-
-    uint32_t cp = 0;
-    const auto* bytes = reinterpret_cast<const uint8_t*>(content.data());
-    int n = utf8_mbtowc(cp, bytes, static_cast<int>(content.size()));
-    if (n <= 0)
-        return true;
-
-    // C0 controls, DEL, and C1 controls must not be emitted as terminal text.
-    return cp < 0x20 || cp == 0x7F || (cp >= 0x80 && cp <= 0x9F);
 }
 
 void Terminal::Render()
@@ -1751,10 +1758,12 @@ void Terminal::DisableRawMode()
         delete s_event_thread;
         s_event_thread = nullptr;
     }
-    std::cout << SHOW_CURSOR;
-    std::cout << "\033[?1049l";  // Disable alternate screen buffer
+    std::cout << SHOW_CURSOR << "\033[?1049l";  // Disable alternate screen buffer
 
     if (vtSupported_) {
+        // 1003l 停用「延伸滑鼠報表」模式
+        // 1006l 停用「SGR 滑鼠模式」
+        // 2004l 停用「括號貼上」模式
         std::cout << "\033[?1003l\033[?1006l\033[?2004l";
     }
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
