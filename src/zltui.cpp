@@ -459,7 +459,7 @@ int Text::cur_idx_of(const Point& cursor) const
 {
     int idx = 0;
     for (size_t i = 0; i < position.size(); i++) {
-        if (chars[i].char_width == 0)
+        if (i<chars.size() && chars[i].char_width == 0)
             continue;
         auto& pos = position[i];
         if (pos.y == cursor.y)
@@ -4252,7 +4252,18 @@ void RichEdit::setText(const std::string& _text)
 void RichEdit::appendText(const std::string& _text, const Style& style)
 {
     RichText::appendText(_text, style);
-    mgr->is_dirty = true;
+
+    if (is_scroll_y) {
+        content_length.y = std::max(content_length.y, text_height + 1);
+        scroll_max.y = std::max(0, content_length.y - clip.height());
+    }
+    if (is_scroll_x) {
+        content_length.x = std::max(content_length.x, text_width + 1);
+        scroll_max.x = std::max(0, content_length.x - clip.width());
+    }
+
+    if (mgr)
+        mgr->is_dirty = true;
 }
 
 void RichEdit::OnSize()
@@ -4620,6 +4631,42 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
                line.compare(first, 3, "```") == 0;
     };
 
+    auto syntax_for_fence = [](const std::string& line) -> const Syntax& {
+        size_t first = line.find_first_not_of(' ');
+        if (first == std::string::npos)
+            return Syntax::CPP;
+
+        std::string language = line.substr(first + 3);
+        const size_t start = language.find_first_not_of(" \t");
+        if (start == std::string::npos)
+            return Syntax::CPP;
+        const size_t end = language.find_last_not_of(" \t");
+        language = language.substr(start, end - start + 1);
+        std::transform(language.begin(), language.end(), language.begin(),
+            [](unsigned char ch) {
+                return static_cast<char>(std::tolower(ch));
+            });
+
+        if (language == "cpp" || language == "c++" ||
+            language == "cxx" || language == "cc" || language == "c")
+            return Syntax::CPP;
+        if (language == "js" || language == "javascript")
+            return Syntax::JS;
+        if (language == "ts" || language == "typescript")
+            return Syntax::TS;
+        if (language == "go")
+            return Syntax::Go;
+        if (language == "rust" || language == "rs")
+            return Syntax::Rust;
+        if (language == "python" || language == "py")
+            return Syntax::Python;
+        if (language == "json")
+            return Syntax::JSON;
+        if (language == "ini")
+            return Syntax::INI;
+        return Syntax::CPP;
+    };
+
     auto horizontal_rule_width = [](const std::string& line) {
         size_t first = line.find_first_not_of(" \t");
         size_t last = line.find_last_not_of(" \t");
@@ -4642,13 +4689,16 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
         if (is_fence(line)) {
             size_t code_index = line_index + 1;
             bool first_code_line = true;
+            std::string code;
             while (code_index < lines.size() && !is_fence(lines[code_index])) {
                 if (!first_code_line)
-                    edit->appendText("\n", markdown_style.code);
-                edit->appendText(lines[code_index], markdown_style.code);
+                    code += '\n';
+                code += lines[code_index];
                 first_code_line = false;
                 ++code_index;
             }
+            if (!code.empty())
+                SyntaxText(edit, code, syntax_for_fence(line));
 
             // Consume the closing fence when present. An unclosed fence
             // consumes the remainder of the Markdown document.
@@ -4807,7 +4857,15 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
         if (line_index + 1 < lines.size())
             edit->appendText("\n", markdown_style.text);
     }
-    // TODO check scroll value
+    Point old_scroll = edit->scroll_value;
+    if (edit->is_scroll_x)
+        edit->scroll_value.x = std::clamp(edit->scroll_value.x,
+            0, edit->scroll_max.x);
+    if (edit->is_scroll_y)
+        edit->scroll_value.y = std::clamp(edit->scroll_value.y,
+            0, edit->scroll_max.y);
+
+    edit->mgr->is_dirty = true;
 }
 
 /// <summary>
