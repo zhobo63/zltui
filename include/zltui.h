@@ -271,7 +271,7 @@ struct RichText: Text
     int del(int idx) override;
     int insert(int idx, const std::string text) override;
 
-    void appendText(const std::string& _text, const Style &style);
+    virtual void appendText(const std::string& _text, const Style &style);
 
     static Style RichTextStyle(const Color& fg, const Color& bg = AnsiColor_Unused, bool bold = false, bool italic = false, bool underline = false);
 };
@@ -502,10 +502,11 @@ struct Win
     virtual void RemoveChild(const WinPtr& obj);
     virtual void Click() { if (on_click) on_click(); }
     virtual bool IsSlider() const { return false; }
-    virtual void Event(const Event& ev) {}
+    virtual bool Event(const Event& ev) { return false; }
     virtual Point GetClipPos() const;
     virtual Point GetTextSize() const { return { 0,0 }; }
     virtual void SetVisible(bool visible);
+    virtual void OnSize() {}
 
     template<class T>
     std::shared_ptr<T> GetUI(const char* name) {
@@ -647,7 +648,7 @@ struct Slider : Win
     void CalRect(Win* parent) override;
     void Paint(DrawBuffer& drawbuf) override;
     bool IsSlider() const override { return (is_scroll_x || is_scroll_y); }
-    void Event(const TUI::Event& ev) override;
+    bool Event(const TUI::Event& ev) override;
     Point GetClipPos() const override;
     virtual void PaintScrollBar(DrawBuffer& drawbuf);
     virtual int ScrollTo(int percent);  // 0~100 percent
@@ -677,7 +678,8 @@ struct Edit : Slider, Text
     void Paint(DrawBuffer& drawbuf) override;
     virtual void PaintText(DrawBuffer& drawbuf);
     void setText(const std::string& _text);
-    void Event(const TUI::Event& ev) override;
+    void OnSize() override;
+    bool Event(const TUI::Event& ev) override;
     void Copy(const Win* ob) override;
     WinPtr Clone() const override;
 
@@ -733,9 +735,12 @@ struct RichEdit : Slider, RichText
     void Paint(DrawBuffer& drawbuf) override;
     void PaintText(DrawBuffer& drawbuf);
     void setText(const std::string& _text);
-    void Event(const TUI::Event& ev) override;
+    void appendText(const std::string& _text, const Style& style) override;
+    void OnSize() override;
+    bool Event(const TUI::Event& ev) override;
     void Copy(const Win* ob) override;
     WinPtr Clone() const override;
+
 
     Point cursor;
     int drag_start = -1;
@@ -781,6 +786,16 @@ struct MarkdownStyle {
 };
 
 void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& style = MarkdownStyle::DEFAULT);
+
+struct Syntax {
+    //TODO 
+    // define colored keyword
+    // define colored comment start ~ comment end
+
+    static Syntax CPP;
+};
+
+void SyntaxText(RichEdit* edit, const std::string& text, const Syntax syntax = Syntax::CPP);
 
 struct Mgr : Win
 {

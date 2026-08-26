@@ -32,23 +32,39 @@ NAMESPACE_BEGIN(TUI)
 static int utf8_char_width(uint32_t cp) {
     if (cp < 0x20 || (cp >= 0x7F && cp < 0xA0)) return 0; // control chars
     if (cp < 0x1100) return 1;
-    // CJK, Hangul, etc. — wide characters
+    // Variation selectors modify the preceding character and occupy no cell.
+    if ((cp >= 0xFE00 && cp <= 0xFE0F) ||
+        (cp >= 0xE0100 && cp <= 0xE01EF)) {
+        return 0;
+    }
+
+    // CJK, Hangul, fullwidth forms, and other East Asian wide characters.
     if ((cp >= 0x1100 && cp <= 0x115F) ||   // Hangul Jamo
-        (cp >= 0x2600 && cp <= 0x26FF) ||   // Misc symbols (☀ ☮ ♠)
+        (cp >= 0x231A && cp <= 0x231B) ||   // Watch, hourglass
+        (cp >= 0x2329 && cp <= 0x232A) ||   // Angle brackets
+        (cp >= 0x23E9 && cp <= 0x23EC) ||   // Fast-forward / reverse
+        (cp == 0x23F0) || (cp == 0x23F3) ||
+        (cp >= 0x25FD && cp <= 0x25FE) ||
+        (cp >= 0x2600 && cp <= 0x26FF) ||   // Misc symbols
         (cp >= 0x2700 && cp <= 0x27BF) ||   // Dingbats
-        (cp >= 0x2E80 && cp <= 0xA4CF) ||   // CJK radicals, Kangxi, etc.
+        (cp >= 0x2B00 && cp <= 0x2BFF) ||   // Misc symbols and arrows
+        (cp >= 0x2E80 && cp <= 0xA4CF) ||   // CJK radicals, Kangxi, Yi
+        (cp >= 0xA960 && cp <= 0xA97F) ||   // Hangul Jamo Extended-A
         (cp >= 0xAC00 && cp <= 0xD7A3) ||   // Hangul syllables
+        (cp >= 0xD7B0 && cp <= 0xD7FF) ||   // Hangul Jamo Extended-B
         (cp >= 0xF900 && cp <= 0xFAFF) ||   // CJK compatibility
-        (cp >= 0xFE00 && cp <= 0xFE0F) ||   // Variation Selectors
-        (cp >= 0xFE10 && cp <= 0xFE6F) ||   // Vertical forms, small forms
-        (cp >= 0xFF00 && cp <= 0xFF60) ||   // Fullwidth ASCII variants
-        (cp >= 0xFFE0 && cp <= 0xFFE6)) {
+        (cp >= 0xFE10 && cp <= 0xFE6F) ||   // Vertical and small forms
+        (cp >= 0xFF01 && cp <= 0xFF60) ||   // Fullwidth ASCII variants
+        (cp >= 0xFFE0 && cp <= 0xFFE6) ||   // Fullwidth currency forms
+        (cp >= 0x20000 && cp <= 0x3FFFD)) { // CJK Extensions
         return 2;
     }
-    // Emoji — typically double-width in terminals
-    if ((cp >= 0x1F300 && cp <= 0x1F9FF) ||   // Misc Symbols & Pictographs, Emoticons
-        (cp >= 0x1FA00 && cp <= 0x1FA6F) ||   // Chess symbols
-        (cp >= 0x1FA70 && cp <= 0x1FAFF)) {   // Extended-A (chess, dominoes, etc.)
+
+    // Emoji and pictographs are conventionally double-width in terminals.
+    if ((cp >= 0x1F004 && cp <= 0x1F0CF) ||
+        (cp >= 0x1F18E && cp <= 0x1F19A) ||
+        (cp >= 0x1F1E6 && cp <= 0x1F1FF) ||
+        (cp >= 0x1F300 && cp <= 0x1FAFF)) {
         return 2;
     }
     return 1;
@@ -254,6 +270,7 @@ Color Color::Parse(const std::string& param)
         {"BrightMagenta", AnsiColor_Bright_Magenta},
         {"BrightCyan",    AnsiColor_Bright_Cyan},
         {"BrightWhite",   AnsiColor_Bright_White},
+        {"Unused",        AnsiColor_Unused},
     };
 
     for (auto& n : names) {
@@ -1335,7 +1352,6 @@ static bool parse_sgr_mouse(Event& ev)
     return true;
 }
 
-
 bool Event::parse_sequence(uint32_t ch)
 {
     if (is_paste_bracket) {
@@ -1350,6 +1366,15 @@ bool Event::parse_sequence(uint32_t ch)
     }
 
     seq.push_back(static_cast<char>(ch));
+
+    // ESC followed by anything other than '[' or 'O' is an Alt+Key
+    // sequence, not a VT control sequence.
+    //if (seq.size() == 2 && ch != '[' && ch != 'O') {
+    //    type = EventType_Key;
+    //    key = ch;
+    //    alt = true;
+    //    return true;
+    //}
 
     if (seq.size() == 1)
         return true;
@@ -1740,7 +1765,7 @@ static uint32_t map_key_event(const KEY_EVENT_RECORD& key, Event &ev)
     }
 
     switch (key.wVirtualKeyCode) {
-    //case VK_ESCAPE:  return 0x1B;
+    case VK_ESCAPE:  return 0x1B;
     //case VK_RETURN:  return '\n';
     //case VK_BACK:    return '\b';
     case VK_TAB:     return '\t';
@@ -1758,17 +1783,49 @@ void Terminal::event_thread()
     DWORD prev_btn_state = 0;
 
     Event ev;
+    auto flush_escape = [&]() {
+        if (!ev.is_vt || ev.seq != "\x1b")
+            return;
+
+        ev.reset();
+        ev.type = EventType_Key;
+        ev.key = '\x1b';
+        ev.vkey = VK_ESCAPE;
+        {
+            std::lock_guard<std::mutex> lock(s_event_mutex);
+            s_events.push_back(ev);
+        }
+        ev.reset();
+    };
+
     while (s_running.load()) {
-        ReadConsoleInputW(hIn, &rec, 1, &count);
+        // ESC is also the prefix of every VT sequence. Give a lone ESC a
+        // short window to receive its possible sequence continuation.
+        DWORD wait_ms = (ev.is_vt && ev.seq == "\x1b") ? 50 : INFINITE;
+        DWORD wait_result = WaitForSingleObject(hIn, wait_ms);
+        if (wait_result == WAIT_TIMEOUT) {
+            flush_escape();
+            continue;
+        }
+        if (wait_result != WAIT_OBJECT_0)
+            break;
+
+        if (!ReadConsoleInputW(hIn, &rec, 1, &count) || count == 0)
+            continue;
+
+        if (ev.is_vt && ev.seq == "\x1b" && rec.EventType != KEY_EVENT) {
+            flush_escape();
+        }
+
         if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown) {
-            // Try to parse VT/ANSI escape sequences first.
-            bool vt_parsed = ev.parse_sequence(rec.Event.KeyEvent.uChar.UnicodeChar);
+            const auto& key_event = rec.Event.KeyEvent;
+            bool vt_parsed = ev.parse_sequence(key_event.uChar.UnicodeChar);
 
             if (!vt_parsed) {
                 ev.type = EventType_Key;
-                ev.vkey = rec.Event.KeyEvent.wVirtualKeyCode;
+                ev.vkey = key_event.wVirtualKeyCode;
                 ev.key = map_key_event(rec.Event.KeyEvent, ev);
-                auto& cks = rec.Event.KeyEvent.dwControlKeyState;
+                auto& cks = key_event.dwControlKeyState;
                 ev.shift = (cks & SHIFT_PRESSED) != 0;
                 ev.ctrl = (cks & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
                 ev.alt = (cks & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
@@ -2567,6 +2624,10 @@ void Win::CalRect(Win* parent)
         local.y2 = local.y + textSize.y;
         break;
     }
+    if (local.width() != lw || local.height() != lh) {
+        OnSize();
+        mgr->is_dirty = true;
+    }
 
     screen = local.move(pt.x, pt.y);
     if (draw_border && border_style != BorderStyle_None) {
@@ -2792,7 +2853,7 @@ void Win::PaintBorder(DrawBuffer& drawbuf)
     if (draw_border) {
         drawbuf.Border(screen, bg_color, border_style, fg_color);
         if (!title.empty()) {
-            drawbuf.Text(title, { screen.x + 1, screen.y }, fg_color);
+            drawbuf.Text(" " + title + " ", { screen.x + 1, screen.y }, fg_color);
         }
     }
 }
@@ -2969,14 +3030,20 @@ void Label::setText(const std::string& _text)
         auto textSize = GetTextSize();
         switch (autosize_) {
         case Autosize_TextWidth:
-            local.x2 = local.x + textSize.x;
+            if (local.x2 != local.x + textSize.x) {
+                local.x2 = local.x + textSize.x;
+                Text::setText(_text, local.width());
+            }
             break;
         case Autosize_TextHeight:
             local.y2 = local.y + textSize.y;
             break;
         case Autosize_TextSize:
-            local.x2 = local.x + textSize.x;
             local.y2 = local.y + textSize.y;
+            if (local.x2 != local.x + textSize.x) {
+                local.x2 = local.x + textSize.x;
+                Text::setText(_text, local.width());
+            }
             break;
         }
     }
@@ -3315,10 +3382,10 @@ void Slider::PaintScrollBar(DrawBuffer& drawbuf)
     }
 }
 
-void Slider::Event(const TUI::Event& ev)
+bool Slider::Event(const TUI::Event& ev)
 {
     if (mgr->hover_slider_.get() != this)
-        return;
+        return false;
     Point pt = { ev.x, ev.y };
     Point old_scroll_value = scroll_value;
     bool any_click = ev.any_button_down();
@@ -3364,6 +3431,19 @@ void Slider::Event(const TUI::Event& ev)
                 }
             }
         }
+    }
+
+    switch (ev.vkey) {
+    case VK_PRIOR:
+        if (is_scroll_y)
+            scroll_value.y = std::max(0, scroll_value.y - clip.height());
+        break;
+    case VK_NEXT:
+        if (is_scroll_y)
+            scroll_value.y = std::min(scroll_max.y, scroll_value.y + clip.height());
+        break;
+    default:
+        break;
     }
 
     switch (ev.button) {
@@ -3419,8 +3499,14 @@ void Slider::Event(const TUI::Event& ev)
         break;
     }
     if (old_scroll_value != scroll_value) {
+        if (scroll_value.x < 0) scroll_value.x = 0;
+        else if (scroll_value.x > scroll_max.x) scroll_value.x = scroll_max.x;
+        if (scroll_value.y < 0) scroll_value.y = 0;
+        else if (scroll_value.y > scroll_max.y) scroll_value.y = scroll_max.y;
         mgr->is_dirty = true;
+        return true;
     }
+    return false;
 }
 
 Point Slider::GetClipPos() const
@@ -3483,7 +3569,6 @@ static bool TextEvent(
     Point& cursor,
     int& drag_start,
     bool& readonly,
-    std::function<bool(const TUI::Event&)>& on_key,
     const TUI::Event& ev)
 {
     bool change = false;
@@ -3552,9 +3637,6 @@ static bool TextEvent(
 
     int idx = text.cur_idx_of(cursor);
     bool handled = true;
-
-    if (on_key && on_key(ev))
-        return change;
 
     if (ev.vkey == VK_BACK) {
         if (!readonly) {
@@ -3740,23 +3822,34 @@ void Edit::setText(const std::string& _text)
     Text::setText(_text, local.width());
     selected.unselect();
     cursor = { 0,0 };
+    KeepCursorVisible(*this, cursor);
     mgr->is_dirty = true;
     if (on_edit) {
         on_edit(this, _text);
     }
 }
 
-void Edit::Event(const TUI::Event& ev)
+void Edit::OnSize()
 {
-    Slider::Event(ev);
+    Text::setText(text, local.width());
+}
+
+bool Edit::Event(const TUI::Event& ev)
+{
+    bool r = Slider::Event(ev);
     auto old_cursor = cursor;
-    if (TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev)) {
+    if (on_key && on_key(ev))
+        return true;
+
+    if (TextEvent(*this, *this, cursor, drag_start, readonly, ev)) {
         if (on_edit) {
             on_edit(this, text);
         }
+        r = true;
     }
     if (old_cursor != cursor)
         KeepCursorVisible(*this, cursor);
+    return r;
 }
 
 void Edit::Copy(const Win* ob)
@@ -4084,17 +4177,33 @@ void RichEdit::setText(const std::string& _text)
     }
 }
 
-void RichEdit::Event(const TUI::Event& ev)
+void RichEdit::appendText(const std::string& _text, const Style& style)
 {
-    Slider::Event(ev);
+    RichText::appendText(_text, style);
+    mgr->is_dirty = true;
+}
+
+void RichEdit::OnSize()
+{
+    Text::setText(text, local.width());
+}
+
+bool RichEdit::Event(const TUI::Event& ev)
+{
+    bool r = Slider::Event(ev);
     auto old_cursor = cursor;
-    if (TextEvent(*this, *this, cursor, drag_start, readonly, on_key, ev)) {
+    if (on_key && on_key(ev)) {
+        return true;
+    }
+    if (TextEvent(*this, *this, cursor, drag_start, readonly, ev)) {
         if (on_edit) {
             on_edit(this, text);
         }
+        r = true;
     }
     if (old_cursor != cursor)
         KeepCursorVisible(*this, cursor);
+    return r;
 }
 
 void RichEdit::Copy(const Win* ob)
@@ -4626,16 +4735,30 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
         if (line_index + 1 < lines.size())
             edit->appendText("\n", markdown_style.text);
     }
+    // TODO check scroll value
+}
+
+/// <summary>
+/// Syntax
+/// </summary>
+
+Syntax Syntax::CPP = {
+    //TODO CPP keyword
+};
+
+void SyntaxText(RichEdit* edit, const std::string& text, const Syntax syntax)
+{
+    //TODO 
 }
 
 /// <summary>
 /// Mgr
 /// </summary>
 
-Mgr::Mgr() :Win(this) 
+Mgr::Mgr() :Win(this)
 {
     paint_list.reserve(256);
-    draw_border = false; 
+    draw_border = false;
 }
 
 WinPtr Mgr::CreateByID(std::string csid, Mgr* mgr)
@@ -4695,13 +4818,13 @@ bool Mgr::Update(Terminal& terminal)
 
     for (auto& ev : events) {
         if (ev.type == EventType_Key || ev.type == EventType_Paste) {
+            if (on_key && on_key(ev)) {
+                continue;
+            }
+            if (notify_ && notify_->Event(ev)) {
+                continue;
+            }
             Navigator(ev);
-            if (on_key) {
-                on_key(ev);
-            }
-            if (notify_) {
-                notify_->Event(ev);
-            }
             is_dirty = true;
             continue;
         }
@@ -4752,9 +4875,9 @@ bool Mgr::Update(Terminal& terminal)
 }
 void Mgr::Paint(DrawBuffer& drawbuf)
 {
+    is_dirty = false;
     paint_list.resize(0);
     Win::Paint(drawbuf);
-    is_dirty = false;
 }
 
 void Mgr::Popup(WinPtr ob)
