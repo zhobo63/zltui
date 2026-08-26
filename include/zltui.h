@@ -788,14 +788,51 @@ struct MarkdownStyle {
 void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& style = MarkdownStyle::DEFAULT);
 
 struct Syntax {
-    //TODO 
-    // define colored keyword
-    // define colored comment start ~ comment end
+    struct Rule {
+        std::string text;
+        RichText::Style style;
+    };
+
+    struct Delimiter {
+        std::string start;
+        std::string end;
+        RichText::Style style;
+        bool escape = true;
+    };
+
+    std::vector<Rule> keywords;
+    std::vector<Delimiter> literals;
+
+    std::string line_comment_start;
+    std::vector<std::string> line_comment_starts;
+    std::string block_comment_start;
+    std::string block_comment_end;
+    bool supports_preprocessor = false;
+    bool ini_mode = false;
+
+    RichText::Style normal;
+    RichText::Style comment;
+    RichText::Style keyword;
+    RichText::Style section;
+    RichText::Style key;
+    RichText::Style value;
+    RichText::Style constant;
+    RichText::Style string_literal;
+    RichText::Style number;
+    RichText::Style preprocessor;
 
     static Syntax CPP;
+    static Syntax JS;
+    static Syntax TS;
+    static Syntax Go;
+    static Syntax Rust;
+    static Syntax Python;
+    static Syntax JSON;
+    static Syntax INI;
 };
 
-void SyntaxText(RichEdit* edit, const std::string& text, const Syntax syntax = Syntax::CPP);
+void SyntaxText(RichEdit* edit, const std::string& text, Syntax syntax = Syntax::CPP);
+void SyntaxText(RichEdit* edit, const std::string& text, const std::string& filename);
 
 struct Mgr : Win
 {

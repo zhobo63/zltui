@@ -7,6 +7,8 @@
 #include <cstring>
 #include <condition_variable>
 #include <climits>
+#include <cctype>
+#include <initializer_list>
 
 #ifndef _WIN32
 #include <cerrno>
@@ -396,6 +398,8 @@ int Text::char_at(int x, int y) const
 {
     int best_idx = -1;
     for (size_t i = 0; i < chars.size(); i++) {
+        if (chars[i].char_width == 0)
+            continue;
         if (position[i].y == y && x >= position[i].x) {
             if (x < position[i].x + chars[i].char_width)
                 best_idx = static_cast<int>(i);
@@ -564,6 +568,8 @@ Point Text::right(int idx)
 {
     if (idx < position.size()) {
         idx++;
+        if (chars[idx].char_width == 0)
+            return right(idx);
     }
     return pos_of(idx);
 }
@@ -657,16 +663,60 @@ void RichText::setText(const std::string& _text, int wrap)
 
 void RichText::appendText(const std::string& _text, const Style& value)
 {
-    const size_t old_count = chars.size();
-    if (styles.size() != old_count)
-        styles.resize(old_count, default_rich_style());
+    if (_text.empty())
+        return;
+
+    if (styles.size() != chars.size())
+        styles.resize(chars.size(), default_rich_style());
+
+    // position has one sentinel entry describing the position after the last
+    // character. Remove it while appending, then recreate it below.
+    Point cursor = { 0, 0 };
+    if (!position.empty()) {
+        cursor = position.back();
+        position.pop_back();
+    }
 
     text += _text;
-    Text::setText(text, wrap_width);
 
-    styles.resize(chars.size(), default_rich_style());
-    for (size_t i = old_count; i < styles.size(); ++i)
-        styles[i] = value;
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(_text.data());
+    size_t len = _text.size();
+    while (len > 0) {
+        uint32_t cp = 0;
+        int n = utf8_mbtowc(cp, p, static_cast<int>(len));
+        if (n <= 0)
+            break;
+
+        if (cp == '\n' || cp == '\r') {
+            position.push_back(cursor);
+            chars.push_back(Char::from_code('\n'));
+            styles.push_back(value);
+            text_width = std::max(text_width, cursor.x);
+            cursor.x = 0;
+            ++cursor.y;
+        }
+        else {
+            Char ch = Char::from_code(cp);
+            if (wrap_width > 0 && cursor.x + ch.char_width > wrap_width &&
+                cursor.x > 0) {
+                text_width = std::max(text_width, cursor.x);
+                cursor.x = 0;
+                ++cursor.y;
+            }
+
+            position.push_back(cursor);
+            chars.push_back(ch);
+            styles.push_back(value);
+            cursor.x += ch.char_width;
+        }
+
+        p += n;
+        len -= n;
+    }
+
+    position.push_back(cursor);
+    text_width = std::max(text_width, cursor.x);
+    text_height = cursor.y;
 }
 
 int RichText::delete_selected(int idx)
@@ -924,6 +974,8 @@ void DrawBuffer::Text(const Point& pos, const TUI::RichText& text)
         const auto& ch = text.chars[i];
         if (ch.ch == '\n')
             continue;
+        //if (ch.char_width == 0)
+        //    continue;
 
         const auto& pt = text.position[i];
         const auto& style = i < text.styles.size()
@@ -4740,13 +4792,511 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
 /// Syntax
 /// </summary>
 
-Syntax Syntax::CPP = {
-    //TODO CPP keyword
-};
+namespace {
 
-void SyntaxText(RichEdit* edit, const std::string& text, const Syntax syntax)
+static Syntax MakeSyntaxBase()
 {
-    //TODO 
+    Syntax result;
+    result.normal = RichText::RichTextStyle(Color(210, 210, 210));
+    result.comment = RichText::RichTextStyle(Color(110, 130, 110),
+        AnsiColor_Unused, false, true);
+    result.string_literal = RichText::RichTextStyle(Color(220, 170, 100));
+    result.number = RichText::RichTextStyle(Color(190, 150, 230));
+    result.keyword = RichText::RichTextStyle(Color(130, 180, 255),
+        AnsiColor_Unused, true);
+    result.section = RichText::RichTextStyle(Color(120, 190, 255),
+        AnsiColor_Unused, true);
+    result.key = RichText::RichTextStyle(Color(100, 210, 190));
+    result.value = RichText::RichTextStyle(Color(220, 190, 120));
+    result.constant = RichText::RichTextStyle(Color(190, 150, 230),
+        AnsiColor_Unused, true);
+    result.preprocessor = RichText::RichTextStyle(Color(220, 130, 150),
+        AnsiColor_Unused, true);
+    return result;
+}
+
+static void AddKeywords(Syntax& syntax,
+                        std::initializer_list<const char*> keywords)
+{
+    for (const char* keyword : keywords)
+        syntax.keywords.push_back({ keyword, syntax.keyword });
+}
+
+static void SortKeywords(Syntax& syntax)
+{
+    std::sort(syntax.keywords.begin(), syntax.keywords.end(),
+        [](const Syntax::Rule& lhs, const Syntax::Rule& rhs) {
+            return lhs.text < rhs.text;
+        });
+}
+
+static void AddLineComment(Syntax& syntax, const char* start)
+{
+    syntax.line_comment_starts.push_back(start);
+    if (syntax.line_comment_start.empty())
+        syntax.line_comment_start = start;
+}
+
+static void AddSlashComments(Syntax& syntax)
+{
+    syntax.line_comment_start = "//";
+    AddLineComment(syntax, "//");
+    syntax.block_comment_start = "/*";
+    syntax.block_comment_end = "*/";
+}
+
+static void AddQuotedLiterals(Syntax& syntax, bool backtick = false,
+                              bool backtick_escape = true)
+{
+    syntax.literals.push_back({ "\"", "\"", syntax.string_literal });
+    syntax.literals.push_back({ "'", "'", syntax.string_literal });
+    if (backtick)
+        syntax.literals.push_back({ "`", "`", syntax.string_literal,
+            backtick_escape });
+}
+
+static void AddDoubleQuotedLiteral(Syntax& syntax)
+{
+    syntax.literals.push_back({ "\"", "\"", syntax.string_literal });
+}
+
+static void AddTripleQuotedLiterals(Syntax& syntax)
+{
+    syntax.literals.push_back({ "\"\"\"", "\"\"\"",
+        syntax.string_literal });
+    syntax.literals.push_back({ "'''", "'''", syntax.string_literal });
+}
+
+}
+
+Syntax Syntax::CPP = [] {
+    Syntax result = MakeSyntaxBase();
+    AddSlashComments(result);
+    AddQuotedLiterals(result);
+    result.supports_preprocessor = true;
+
+    const char* keyword_list[] = {
+        "alignas", "alignof", "and", "asm", "auto",
+        "bool", "break",
+        "case", "catch", "char", "class", "const",
+        "constexpr", "consteval", "constinit", "const_cast",
+        "continue",
+        "decltype", "default", "delete", "do", "double",
+        "dynamic_cast",
+        "else", "enum", "explicit", "export", "extern",
+        "false", "float", "for", "friend",
+        "if", "inline", "int",
+        "long",
+        "mutable",
+        "namespace", "new", "noexcept", "not", "nullptr",
+        "operator", "or", "override",
+        "private", "protected", "public",
+        "register", "reinterpret_cast", "requires", "return",
+        "short", "signed", "sizeof", "static", "static_assert",
+        "static_cast", "struct", "switch",
+        "template", "this", "thread_local", "throw", "true",
+        "try", "typedef", "typeid", "typename",
+        "union", "unsigned", "using",
+        "virtual", "void", "volatile",
+        "wchar_t", "while",
+        "xor", "co_await", "co_return", "co_yield", "concept"
+    };
+
+    for (const char* keyword : keyword_list)
+        result.keywords.push_back({ keyword, result.keyword });
+
+    SortKeywords(result);
+    return result;
+}();
+
+Syntax Syntax::JS = [] {
+    Syntax result = MakeSyntaxBase();
+    AddSlashComments(result);
+    AddQuotedLiterals(result, true, true);
+    AddKeywords(result, {
+        "as", "async", "await", "break", "case", "catch", "class",
+        "const", "continue", "debugger", "default", "delete", "do",
+        "else", "export", "extends", "false", "finally", "for",
+        "from", "function", "if", "import", "in", "instanceof",
+        "let", "new", "null", "of", "return", "static", "super",
+        "switch", "this", "throw", "true", "try", "typeof", "var",
+        "void", "while", "with", "yield"
+    });
+    SortKeywords(result);
+    return result;
+}();
+
+Syntax Syntax::TS = [] {
+    Syntax result = Syntax::JS;
+    AddKeywords(result, {
+        "any", "boolean", "declare", "enum", "implements", "interface",
+        "keyof", "module", "namespace", "never", "number", "object",
+        "private", "protected", "public", "readonly", "require",
+        "string", "symbol", "type", "undefined", "unknown", "satisfies"
+    });
+    SortKeywords(result);
+    return result;
+}();
+
+Syntax Syntax::Go = [] {
+    Syntax result = MakeSyntaxBase();
+    AddSlashComments(result);
+    AddQuotedLiterals(result, true, false);
+    AddKeywords(result, {
+        "break", "case", "chan", "const", "continue", "default",
+        "defer", "else", "fallthrough", "for", "func", "go", "goto",
+        "if", "import", "interface", "map", "package", "range",
+        "return", "select", "struct", "switch", "type", "var"
+    });
+    SortKeywords(result);
+    return result;
+}();
+
+Syntax Syntax::Rust = [] {
+    Syntax result = MakeSyntaxBase();
+    AddSlashComments(result);
+    AddQuotedLiterals(result);
+    AddKeywords(result, {
+        "as", "async", "await", "break", "const", "continue", "crate",
+        "dyn", "else", "enum", "extern", "false", "fn", "for", "if",
+        "impl", "in", "let", "loop", "match", "mod", "move", "mut",
+        "pub", "ref", "return", "self", "Self", "static", "struct",
+        "super", "trait", "true", "type", "unsafe", "use", "where",
+        "while", "abstract", "become", "box", "do", "final", "macro",
+        "override", "priv", "typeof", "unsized", "virtual", "yield"
+    });
+    SortKeywords(result);
+    return result;
+}();
+
+Syntax Syntax::Python = [] {
+    Syntax result = MakeSyntaxBase();
+    result.line_comment_start = "#";
+    AddLineComment(result, "#");
+    AddQuotedLiterals(result);
+    AddTripleQuotedLiterals(result);
+    AddKeywords(result, {
+        "and", "as", "assert", "async", "await", "break", "case",
+        "class", "continue", "def", "del", "elif", "else", "except",
+        "False", "finally", "for", "from", "global", "if", "import",
+        "in", "is", "lambda", "match", "None", "nonlocal", "not",
+        "or", "pass", "raise", "return", "True", "try", "while",
+        "with", "yield"
+    });
+    SortKeywords(result);
+    return result;
+}();
+
+Syntax Syntax::JSON = [] {
+    Syntax result = MakeSyntaxBase();
+    AddDoubleQuotedLiteral(result);
+    AddKeywords(result, { "false", "null", "true" });
+    SortKeywords(result);
+    return result;
+}();
+
+Syntax Syntax::INI = [] {
+    Syntax result = MakeSyntaxBase();
+    result.ini_mode = true;
+    result.line_comment_start = ";";
+    AddLineComment(result, ";");
+    AddLineComment(result, "#");
+    AddQuotedLiterals(result);
+    for (const char* constant : { "true", "false", "yes", "no", "on", "off" })
+        result.keywords.push_back({ constant, result.constant });
+    SortKeywords(result);
+    return result;
+}();
+
+
+void SyntaxText(RichEdit* edit, const std::string& text, Syntax syntax)
+{
+    if (!edit || text.empty())
+        return;
+
+    std::sort(syntax.keywords.begin(), syntax.keywords.end(),
+        [](const Syntax::Rule& lhs, const Syntax::Rule& rhs) {
+            return lhs.text < rhs.text;
+        });
+
+    const auto is_identifier_char = [](unsigned char c) {
+        return std::isalnum(c) || c == '_';
+    };
+
+    const auto starts_with = [&text](size_t pos, const std::string& value) {
+        return !value.empty() && value.size() <= text.size() &&
+            pos <= text.size() - value.size() &&
+            text.compare(pos, value.size(), value) == 0;
+    };
+
+    struct Run {
+        std::string text;
+        RichText::Style style;
+    };
+
+    std::vector<Run> runs;
+    runs.reserve(text.size() / 8 + 1);
+
+    const auto append = [&runs](const std::string& value,
+                                const RichText::Style& style) {
+        if (!value.empty())
+            runs.push_back({ value, style });
+    };
+
+    const auto find_keyword = [&syntax](const std::string& word)
+        -> const Syntax::Rule* {
+        const auto it = std::lower_bound(syntax.keywords.begin(),
+            syntax.keywords.end(), word,
+            [](const Syntax::Rule& rule, const std::string& value) {
+                return rule.text < value;
+            });
+        if (it != syntax.keywords.end() && it->text == word)
+            return &*it;
+        return nullptr;
+    };
+
+    size_t pos = 0;
+    size_t plain_start = 0;
+    bool line_start = true;
+    bool ini_value = false;
+    const auto plain_style = [&]() -> const RichText::Style& {
+        return ini_value ? syntax.value : syntax.normal;
+    };
+
+    while (pos < text.size()) {
+        if (text[pos] == '\n') {
+            if (ini_value) {
+                append(text.substr(plain_start, pos - plain_start),
+                       syntax.value);
+                plain_start = pos;
+                ini_value = false;
+            }
+            ++pos;
+            line_start = true;
+            continue;
+        }
+
+        if (line_start && (text[pos] == ' ' || text[pos] == '\t' ||
+                           text[pos] == '\r')) {
+            ++pos;
+            continue;
+        }
+
+        if (syntax.ini_mode && line_start) {
+            const size_t line_end = text.find('\n', pos) == std::string::npos
+                ? text.size() : text.find('\n', pos);
+            if (text[pos] == '[') {
+                const size_t section_end = text.find(']', pos + 1);
+                if (section_end != std::string::npos &&
+                    section_end < line_end) {
+                    append(text.substr(plain_start, line_end - plain_start),
+                           syntax.section);
+                    pos = line_end;
+                    plain_start = pos;
+                    continue;
+                }
+            }
+
+            size_t separator = pos;
+            while (separator < line_end && text[separator] != '=' &&
+                   text[separator] != ':')
+                ++separator;
+            if (separator < line_end && separator > pos) {
+                size_t key_end = separator;
+                while (key_end > pos &&
+                       (text[key_end - 1] == ' ' || text[key_end - 1] == '\t'))
+                    --key_end;
+                append(text.substr(plain_start, pos - plain_start),
+                       syntax.normal);
+                append(text.substr(pos, key_end - pos), syntax.key);
+                append(text.substr(key_end, separator - key_end + 1),
+                       syntax.normal);
+                pos = separator + 1;
+                plain_start = pos;
+                line_start = false;
+                ini_value = true;
+                continue;
+            }
+        }
+
+        if (syntax.supports_preprocessor && line_start && text[pos] == '#') {
+            append(text.substr(plain_start, pos - plain_start), plain_style());
+            size_t end = pos + 1;
+            while (end < text.size() && (text[end] == ' ' || text[end] == '\t'))
+                ++end;
+            while (end < text.size() && is_identifier_char(static_cast<unsigned char>(text[end])))
+                ++end;
+            append(text.substr(pos, end - pos), syntax.preprocessor);
+            pos = end;
+            plain_start = pos;
+            line_start = false;
+            continue;
+        }
+
+        const std::string* line_comment = nullptr;
+        if (starts_with(pos, syntax.line_comment_start))
+            line_comment = &syntax.line_comment_start;
+        for (const std::string& candidate : syntax.line_comment_starts) {
+            if (starts_with(pos, candidate) &&
+                (!line_comment || candidate.size() > line_comment->size()))
+                line_comment = &candidate;
+        }
+
+        if (line_comment) {
+            append(text.substr(plain_start, pos - plain_start), plain_style());
+            size_t end = text.find('\n', pos);
+            if (end == std::string::npos)
+                end = text.size();
+            append(text.substr(pos, end - pos), syntax.comment);
+            pos = end;
+            plain_start = pos;
+            line_start = true;
+            continue;
+        }
+
+        if (starts_with(pos, syntax.block_comment_start)) {
+            append(text.substr(plain_start, pos - plain_start), plain_style());
+            size_t end = text.find(syntax.block_comment_end,
+                                   pos + syntax.block_comment_start.size());
+            if (end == std::string::npos)
+                end = text.size();
+            else
+                end += syntax.block_comment_end.size();
+            append(text.substr(pos, end - pos), syntax.comment);
+            line_start = text.find_last_of('\n', end - 1) == end - 1;
+            pos = end;
+            plain_start = pos;
+            continue;
+        }
+
+        const Syntax::Delimiter* literal = nullptr;
+        for (const Syntax::Delimiter& candidate : syntax.literals) {
+            if (starts_with(pos, candidate.start) &&
+                (!literal || candidate.start.size() > literal->start.size()))
+                literal = &candidate;
+        }
+
+        if (literal) {
+            append(text.substr(plain_start, pos - plain_start), plain_style());
+            const size_t literal_start = pos;
+            pos += literal->start.size();
+            while (pos < text.size()) {
+                if (literal->escape && text[pos] == '\\') {
+                    pos += std::min<size_t>(2, text.size() - pos);
+                }
+                else if (starts_with(pos, literal->end)) {
+                    pos += literal->end.size();
+                    break;
+                }
+                else {
+                    ++pos;
+                }
+            }
+            append(text.substr(literal_start, pos - literal_start), literal->style);
+            plain_start = pos;
+            line_start = false;
+            continue;
+        }
+
+        if (std::isdigit(static_cast<unsigned char>(text[pos]))) {
+            append(text.substr(plain_start, pos - plain_start), plain_style());
+            size_t end = pos + 1;
+            while (end < text.size() && (std::isalnum(
+                       static_cast<unsigned char>(text[end])) ||
+                   text[end] == '.' || text[end] == '_'))
+                ++end;
+            append(text.substr(pos, end - pos), syntax.number);
+            pos = end;
+            plain_start = pos;
+            line_start = false;
+            continue;
+        }
+
+        if (std::isalpha(static_cast<unsigned char>(text[pos])) ||
+            text[pos] == '_') {
+            size_t end = pos + 1;
+            while (end < text.size() && is_identifier_char(static_cast<unsigned char>(text[end])))
+                ++end;
+            const Syntax::Rule* keyword = find_keyword(
+                text.substr(pos, end - pos));
+            if (keyword) {
+                append(text.substr(plain_start, pos - plain_start), plain_style());
+                append(text.substr(pos, end - pos), keyword->style);
+                plain_start = end;
+            }
+            pos = end;
+            line_start = false;
+            continue;
+        }
+
+        line_start = false;
+        ++pos;
+    }
+
+    if (ini_value)
+        append(text.substr(plain_start), syntax.value);
+    else
+        append(text.substr(plain_start), syntax.normal);
+
+    // Append the complete text once, then apply token styles in one pass.
+    std::string rendered;
+    rendered.reserve(text.size());
+    for (const Run& run : runs)
+        rendered += run.text;
+
+    const size_t first_char = edit->chars.size();
+    edit->appendText(rendered, syntax.normal);
+
+    size_t char_index = first_char;
+    for (const Run& run : runs) {
+        const size_t start = char_index;
+        size_t byte_count = 0;
+        while (char_index < edit->chars.size() &&
+               byte_count < run.text.size()) {
+            byte_count += static_cast<size_t>(edit->chars[char_index].size);
+            ++char_index;
+        }
+        edit->setStyle(static_cast<int>(start),
+            static_cast<int>(char_index), run.style);
+    }
+}
+
+void SyntaxText(RichEdit* edit, const std::string& text, const std::string& filename)
+{
+    std::string name = filename;
+    const size_t separator = name.find_last_of("/\\");
+    if (separator != std::string::npos)
+        name.erase(0, separator + 1);
+
+    const size_t dot = name.find_last_of('.');
+    std::string extension;
+    if (dot != std::string::npos && dot + 1 < name.size())
+        extension = name.substr(dot + 1);
+
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+
+    const Syntax* syntax = &Syntax::CPP;
+    if (extension == "js" || extension == "mjs" || extension == "cjs")
+        syntax = &Syntax::JS;
+    else if (extension == "ts" || extension == "tsx" ||
+             extension == "mts" || extension == "cts")
+        syntax = &Syntax::TS;
+    else if (extension == "go")
+        syntax = &Syntax::Go;
+    else if (extension == "rs")
+        syntax = &Syntax::Rust;
+    else if (extension == "py" || extension == "pyw")
+        syntax = &Syntax::Python;
+    else if (extension == "json" || extension == "jsonc")
+        syntax = &Syntax::JSON;
+    else if (extension == "ini" || extension == "cfg" ||
+             extension == "conf")
+        syntax = &Syntax::INI;
+
+    SyntaxText(edit, text, *syntax);
 }
 
 /// <summary>
