@@ -1674,10 +1674,12 @@ void Terminal::DisableRawMode()
         delete s_event_thread;
         s_event_thread = nullptr;
     }
-    std::cout << SHOW_CURSOR;
-    std::cout << "\033[?1049l";  // Disable alternate screen buffer
+    std::cout << SHOW_CURSOR << "\033[?1049l";  // Disable alternate screen buffer
 
     if (vtSupported_) {
+        // 1003l 停用「延伸滑鼠報表」模式
+        // 1006l 停用「SGR 滑鼠模式」
+        // 2004l 停用「括號貼上」模式
         std::cout << "\033[?1003l\033[?1006l\033[?2004l";
     }
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);

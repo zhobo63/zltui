@@ -281,7 +281,6 @@ TUI::Markdown(edit, markdown);
             for (const auto& entry : std::filesystem::directory_iterator(currentPath)) {
                 addEntry((entry.is_directory() ? u8"📁 " : u8"📄 ") +
                          entry.path().filename().string(), entry.path(), entry.is_directory());
-                if (y > 20) break;
             }
         } catch (const std::filesystem::filesystem_error& error) {
             AddLabel(files, mgr, "error", { 2, y, 70, y + 1 },
