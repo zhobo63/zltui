@@ -204,7 +204,8 @@ blob:https://teams.microsoft.com/245bf7c5-0a00-466e-9977-a1ddfeadf53d
 | 🧠 | brain | U+1F9E0 |
     
 ```cpp
-TUI::Markdown(edit, markdown);
+if (edit != nullptr) 
+    TUI::Markdown(edit, markdown);
 ```
 )";
     Markdown(rich.get(), markdown);
