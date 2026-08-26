@@ -156,7 +156,7 @@ int main()
     rich->appendText("Per-character styles: ", normal);
     rich->appendText("success ", green);
     rich->appendText("warning\n", yellow);
-    rich->appendText(u8"UTF-8 / CJK width test:✏️\n", normal);
+    rich->appendText(u8"UTF-8 / CJK width test:\n", normal);
     rich->appendText(u8"中文：你好，世界！全形標點：，。！？\n", green);
     rich->appendText(u8"日本語：こんにちは、世界！カタカナ：テスト\n", yellow);
     rich->appendText(u8"한국어：안녕하세요, 세계! 한글 테스트\n", normal);
@@ -178,6 +178,31 @@ int main()
 | 日本語 | こんにちは | **ready** |
 | 한국어 | 안녕하세요 | **ready** |
 
+## Emoji / 表情符號
+blob:https://teams.microsoft.com/245bf7c5-0a00-466e-9977-a1ddfeadf53d
+| Emoji | Name | Code point |
+|---|---|---|
+| 😀 | grinning face | U+1F600 |
+| 😊 | smiling face | U+1F60A |
+| 👍 | thumbs up | U+1F44D |
+| 👎 | thumbs down | U+1F44E |
+| 👏 | clapping hands | U+1F44F |
+| 🎉 | party popper | U+1F389 |
+| ❤️ | red heart | U+2764 U+FE0F |
+| 🔥 | fire | U+1F525 |
+| ⚡ | high voltage | U+26A1 |
+| ✅ | check mark | U+2705 |
+| ❌ | cross mark | U+274C |
+| ⚠️ | warning | U+26A0 U+FE0F |
+| 📁 | file folder | U+1F4C1 |
+| 📄 | page | U+1F4C4 |
+| ✏️ | pencil | U+270F U+FE0F |
+| 🚀 | rocket | U+1F680 |
+| 🌍 | globe | U+1F30D |
+| ☕ | hot beverage | U+2615 |
+| 🐍 | snake | U+1F40D |
+| 🧠 | brain | U+1F9E0 |
+    
 ```cpp
 TUI::Markdown(edit, markdown);
 ```

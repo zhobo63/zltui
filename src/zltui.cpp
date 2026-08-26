@@ -396,6 +396,8 @@ int Text::char_at(int x, int y) const
 {
     int best_idx = -1;
     for (size_t i = 0; i < chars.size(); i++) {
+        if (chars[i].char_width == 0)
+            continue;
         if (position[i].y == y && x >= position[i].x) {
             if (x < position[i].x + chars[i].char_width)
                 best_idx = static_cast<int>(i);
@@ -425,8 +427,12 @@ int Text::char_at(int x, int y) const
 
 Point Text::pos_of(int idx) const
 {
-    if (idx >= 0 && idx < static_cast<int>(chars.size()))
+    if (idx >= 0 && idx < static_cast<int>(chars.size())) {
+        if (chars[idx].char_width == 0 && idx + 1 < position.size()) {
+            return position[idx + 1];
+        }
         return position[idx];
+    }
     // Past end — compute position after last char on its line
     if (!chars.empty() && idx > 0) {
         int prev = idx - 1;
@@ -451,6 +457,8 @@ int Text::cur_idx_of(const Point& cursor) const
 {
     int idx = 0;
     for (size_t i = 0; i < position.size(); i++) {
+        if (chars[i].char_width == 0)
+            continue;
         auto& pos = position[i];
         if (pos.y == cursor.y)
             idx = (int)i;
@@ -557,6 +565,9 @@ Point Text::left(int idx)
 {
     if (idx > 0) {
         idx--;
+        if (chars[idx].char_width == 0) {
+            return left(idx);
+        }
     }
     return pos_of(idx);
 }
@@ -868,7 +879,8 @@ void DrawBuffer::Text(const std::string& text, const Point& pos, const Color& co
             cell.underline = underline;
             cell.content = std::string((const char*)p, (size_t)n);
             if (cell.size > 1) {
-                cells_[px + cur_x + 1].content = "";
+                auto& next_cell = cells_[cur_y * width_ + cur_x + 1];
+                next_cell.content = "";
             }
         }
         cur_x += char_width;
@@ -954,10 +966,11 @@ void DrawBuffer::Text(const Point& pos, const TUI::RichText& text)
         if (cell.size > 1) {
             auto& next_cell = cells_[cur_y * width_ + cur_x + 1];
             next_cell.content = "";
+            next_cell.size = 0;
             if (i + 1 < text.chars.size()) {
                 const auto& next_ch = text.chars[i + 1];
                 if (next_ch.char_width == 0 && next_ch.ch >= 0xFE00 && next_ch.ch <= 0xFE0F) {
-                    cell.content += std::string(next_ch.utf8, next_ch.size);
+                    next_cell.content = std::string(next_ch.utf8, next_ch.size);
                 }
             }
         }
@@ -1566,30 +1579,31 @@ void Terminal::Render()
             if (cur_y != y) {
                 out += CursorMove(x, y);
             }
-
-            if (cur_cell.fg_color != cur_fg) {
-                cur_fg = cur_cell.fg_color;
-                out += cur_fg.toAnsi(true);
-            }
-            if (cur_cell.bg_color != cur_bg) {
-                cur_bg = cur_cell.bg_color;
-                out += cur_bg.toAnsi(false);
-            }
-            if (cur_cell.bold != cur_bold) {
-                cur_bold = cur_cell.bold;
-                out += cur_bold ? ANSI_BOLD : "\033[22m";
-            }
-            if (cur_cell.italic != cur_italic) {
-                cur_italic = cur_cell.italic;
-                out += cur_italic ? ANSI_ITALIC : "\033[23m";
-            }
-            if (cur_cell.underline != cur_underline) {
-                cur_underline = cur_cell.underline;
-                out += cur_underline ? ANSI_UNDER : "\033[24m";
+            if (cur_cell.size > 0) {
+                if (cur_cell.fg_color != cur_fg) {
+                    cur_fg = cur_cell.fg_color;
+                    out += cur_fg.toAnsi(true);
+                }
+                if (cur_cell.bg_color != cur_bg) {
+                    cur_bg = cur_cell.bg_color;
+                    out += cur_bg.toAnsi(false);
+                }
+                if (cur_cell.bold != cur_bold) {
+                    cur_bold = cur_cell.bold;
+                    out += cur_bold ? ANSI_BOLD : "\033[22m";
+                }
+                if (cur_cell.italic != cur_italic) {
+                    cur_italic = cur_cell.italic;
+                    out += cur_italic ? ANSI_ITALIC : "\033[23m";
+                }
+                if (cur_cell.underline != cur_underline) {
+                    cur_underline = cur_cell.underline;
+                    out += cur_underline ? ANSI_UNDER : "\033[24m";
+                }
             }
             if (cur_cell.content.empty()) {
             }
-            if (is_terminal_control(cur_cell.content)) {
+            else if (is_terminal_control(cur_cell.content)) {
                 out += " ";
             }
             else {
@@ -1599,7 +1613,8 @@ void Terminal::Render()
             cur_y = y;
 
             if (cur_cell.size > 1) {
-                x += cur_cell.size - 1;
+                cur_cell.size = cur_cell.size;
+                // x += cur_cell.size - 1;
             }
         }
         yw += size.x;
