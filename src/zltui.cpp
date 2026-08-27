@@ -3413,26 +3413,7 @@ void Slider::CalRect(Win* parent)
     if (is_scroll_x) {
         clip.y2--;
     }
-    if (is_scroll_y) {
-        if (child.size() > 0) {
-            auto ch = child.back();
-            content_length.y = std::max(content_length.y, ch->local.y2 + 1);
-        }
-        if (content_length.y < clip.height()) {
-            content_length.y = clip.height();
-        }
-        scroll_max.y = std::max(0, content_length.y - clip.height());
-    }
-    if (is_scroll_x) {
-        if (child.size() > 0) {
-            auto ch = child.back();
-            content_length.x = std::max(content_length.x, ch->local.x2 + 1);
-        }
-        if (content_length.x < clip.width()) {
-            content_length.x = clip.width();
-        }
-        scroll_max.x = std::max(0, content_length.x - clip.width());
-    }
+    UpdateScrollMax();
 }
 
 void Slider::Paint(DrawBuffer& drawbuf)
@@ -3586,6 +3567,30 @@ Point Slider::GetClipPos() const
     return { clip.x - scroll_value.x, clip.y - scroll_value.y };
 }
 
+void Slider::UpdateScrollMax()
+{
+    if (is_scroll_y) {
+        if (child.size() > 0) {
+            auto ch = child.back();
+            content_length.y = std::max(content_length.y, ch->local.y2 + 1);
+        }
+        if (content_length.y < local.height()) {
+            content_length.y = local.height();
+        }
+        scroll_max.y = std::max(0, content_length.y - local.height());
+    }
+    if (is_scroll_x) {
+        if (child.size() > 0) {
+            auto ch = child.back();
+            content_length.x = std::max(content_length.x, ch->local.x2 + 1);
+        }
+        if (content_length.x < local.width()) {
+            content_length.x = local.width();
+        }
+        scroll_max.x = std::max(0, content_length.x - local.width());
+    }
+}
+
 int Slider::ScrollTo(int percent)
 {
     int value = 0;
@@ -3623,12 +3628,7 @@ WinPtr Slider::Clone() const
 void Slider::AddChild(WinPtr obj)
 {
     Win::AddChild(obj);
-    if (is_scroll_x) {
-        scroll_max.x = std::max(scroll_max.x, obj->local.x2 + 1 - clip.width());
-    }
-    if (is_scroll_y) {
-        scroll_max.y = std::max(scroll_max.y, obj->local.y2 + 1 - clip.height());
-    }
+    UpdateScrollMax();
 }
 
 ///
@@ -3853,14 +3853,6 @@ Point Edit::GetTextSize() const
 void Edit::CalRect(Win* parent)
 {
     Slider::CalRect(parent);
-    if (is_scroll_y) {
-        content_length.y = std::max(content_length.y, text_height + 1);
-        scroll_max.y = std::max(0, content_length.y - clip.height());
-    }
-    if (is_scroll_x) {
-        content_length.x = std::max(content_length.x, text_width + 1);
-        scroll_max.x = std::max(0, content_length.x - clip.width());
-    }
 }
 
 void Edit::Paint(DrawBuffer& drawbuf)
@@ -3947,6 +3939,18 @@ WinPtr Edit::Clone() const
     Edit* ob = new Edit(mgr);
     ob->Copy(this);
     return WinPtr(ob);
+}
+
+void Edit::UpdateScrollMax()
+{
+    if (is_scroll_y) {
+        content_length.y = std::max(content_length.y, text_height + 1);
+        scroll_max.y = std::max(0, content_length.y - clip.height());
+    }
+    if (is_scroll_x) {
+        content_length.x = std::max(content_length.x, text_width + 1);
+        scroll_max.x = std::max(0, content_length.x - clip.width());
+    }
 }
 
 /// <summary>
@@ -4197,15 +4201,6 @@ Point RichEdit::GetTextSize() const
 void RichEdit::CalRect(Win* parent)
 {
     Slider::CalRect(parent);
-
-    if (is_scroll_y) {
-        content_length.y = std::max(content_length.y, text_height + 1);
-        scroll_max.y = std::max(0, content_length.y - clip.height());
-    }
-    if (is_scroll_x) {
-        content_length.x = std::max(content_length.x, text_width + 1);
-        scroll_max.x = std::max(0, content_length.x - clip.width());
-    }
 }
 
 void RichEdit::Paint(DrawBuffer& drawbuf)
@@ -4242,6 +4237,7 @@ void RichEdit::setText(const std::string& _text)
     RichText::setText(_text, local.width());
     selected.unselect();
     cursor = { 0, 0 };
+    UpdateScrollMax();
     if (mgr)
         mgr->is_dirty = true;
     if (on_edit) {
@@ -4253,6 +4249,20 @@ void RichEdit::appendText(const std::string& _text, const Style& style)
 {
     RichText::appendText(_text, style);
 
+    if (autosize_ == Autosize_TextHeight || autosize_ == Autosize_TextSize) {
+        local.y2 = local.y + text_height;
+    }
+    if (autosize_ == Autosize_TextWidth || autosize_ == Autosize_TextSize) {
+        local.x2 = local.x + text_width;
+    }
+    UpdateScrollMax();
+
+    if (mgr)
+        mgr->is_dirty = true;
+}
+
+void RichEdit::UpdateScrollMax()
+{
     if (is_scroll_y) {
         content_length.y = std::max(content_length.y, text_height + 1);
         scroll_max.y = std::max(0, content_length.y - clip.height());
@@ -4261,9 +4271,6 @@ void RichEdit::appendText(const std::string& _text, const Style& style)
         content_length.x = std::max(content_length.x, text_width + 1);
         scroll_max.x = std::max(0, content_length.x - clip.width());
     }
-
-    if (mgr)
-        mgr->is_dirty = true;
 }
 
 void RichEdit::OnSize()
@@ -4859,11 +4866,9 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
     }
     Point old_scroll = edit->scroll_value;
     if (edit->is_scroll_x)
-        edit->scroll_value.x = std::clamp(edit->scroll_value.x,
-            0, edit->scroll_max.x);
+        edit->scroll_value.x = std::clamp(edit->scroll_value.x, 0, edit->scroll_max.x);
     if (edit->is_scroll_y)
-        edit->scroll_value.y = std::clamp(edit->scroll_value.y,
-            0, edit->scroll_max.y);
+        edit->scroll_value.y = std::clamp(edit->scroll_value.y, 0, edit->scroll_max.y);
 
     edit->mgr->is_dirty = true;
 }
