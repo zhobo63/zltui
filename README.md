@@ -20,7 +20,9 @@ ZLTUI is a lightweight C++ terminal UI library for building ANSI-based text inte
 - `include/zltui.h` - public API
 - `src/zltui.cpp` - implementation
 - `sample/hello/main.cpp` - sample application and RichText/Markdown examples
-- `doc/` - design notes and TODOs
+- `doc/dsl.md` - DSL syntax, layout, and widget configuration
+- `doc/richedit.md` - RichEdit, RichText styles, and Markdown usage
+- `doc/TODO.md` - design notes and TODOs
 
 ## Requirements
 
@@ -153,6 +155,14 @@ TUI::Markdown(edit, md, style);
 ```
 
 Markdown parsing is performed into RichText spans/character styles; fenced code blocks are emitted literally and do not parse inline Markdown tags.
+
+For the complete RichEdit API, DSL commands, style options, and Markdown details, see [`doc/richedit.md`](doc/richedit.md) and [`doc/dsl.md`](doc/dsl.md).
+
+## Documentation
+
+- [DSL reference](doc/dsl.md) - object declarations, layout, colors, scrolling, and widget properties.
+- [RichEdit guide](doc/richedit.md) - editable rich text, per-character styles, and Markdown rendering.
+- [TODO list](doc/TODO.md) - known limitations and planned work.
 
 ## Notes
 
