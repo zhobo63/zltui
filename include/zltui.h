@@ -651,6 +651,7 @@ struct Slider : Win
     bool Event(const TUI::Event& ev) override;
     Point GetClipPos() const override;
     virtual void PaintScrollBar(DrawBuffer& drawbuf);
+    virtual void UpdateScrollMax();
     virtual int ScrollTo(int percent);  // 0~100 percent
     void Copy(const Win* ob) override;
     WinPtr Clone() const override;
@@ -682,6 +683,7 @@ struct Edit : Slider, Text
     bool Event(const TUI::Event& ev) override;
     void Copy(const Win* ob) override;
     WinPtr Clone() const override;
+    void UpdateScrollMax() override;
 
     Point cursor;
     int drag_start = -1;  // character index where drag selection started
@@ -741,7 +743,7 @@ struct RichEdit : Slider, RichText
     bool Event(const TUI::Event& ev) override;
     void Copy(const Win* ob) override;
     WinPtr Clone() const override;
-
+    void UpdateScrollMax() override;
 
     Point cursor;
     int drag_start = -1;
