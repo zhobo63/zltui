@@ -695,34 +695,35 @@ struct Edit : Slider, Text
 
 using EditPtr = std::shared_ptr<Edit>;
 
-struct LabelEdit : Edit
+struct LabelEdit : Label
 {
     LabelEdit(Mgr* mgr);
 
     bool ParseCmd(const std::string& cmd, EditLine& el) override;
-    void CalRect(Win* parent) override;
-    void PaintText(DrawBuffer& drawbuf) override;
-    void PaintBorder(DrawBuffer& drawbuf) override;
     void Copy(const Win* ob) override;
     WinPtr Clone() const override;
 
-    void Input(const std::string& label, std::string& value, fn_edit onedit = nullptr);
-    void Input(const std::string& label, uint32_t& value, uint32_t step = 1, fn_edit onedit = nullptr);
+    void SetValue(std::string& value);
+    void Text(const std::string& label, std::string& value);
+    void Input(const std::string& label, std::string& value, Edit::fn_edit onedit = nullptr);
+    void Input(const std::string& label, uint32_t& value, uint32_t step = 1, Edit::fn_edit onedit = nullptr);
     void Button(const std::string& label, const std::string& value, fn_click onclick);
     void Check(const std::string& label, bool& value, const Check::CheckText & check_text = {}, Check::fn_check oncheck = nullptr);
     void Combo(const std::string& label, int& value, const std::vector<std::string>& items, Combo::fn_selected onselect = nullptr);
 
     enum Type_ {
+        Type_None,
+        Type_Label,
         Type_Button,
         Type_Edit,
         Type_Check,
         Type_Combo,
     };
 
-    std::string label = "";
     int label_width = 16;
     Color bg_color_hover = COLOR_HOVER;
-    Color fg_color_label = COLOR_LABEL;
+    Type_ type = Type_None;
+    WinPtr control;
 };
 
 using LabelEditPtr = std::shared_ptr<LabelEdit>;
@@ -864,7 +865,6 @@ using MgrPtr = std::shared_ptr<Mgr>;
 ButtonPtr GetButton(WinPtr ob, Win::fn_click click, const char* find = nullptr);
 CheckPtr GetCheck(WinPtr ob, bool value, Check::fn_check check, const char* find = nullptr);
 EditPtr GetEdit(WinPtr ob, const std::string& text, Edit::fn_edit edit, const char* find = nullptr);
-LabelEditPtr GetLabelEdit(WinPtr ob, const std::string& text, Edit::fn_edit edit, const char* find = nullptr);
 
 
 NAMESPACE_END

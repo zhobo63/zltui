@@ -2259,6 +2259,12 @@ void Terminal::event_thread()
 
 #endif
 
+static bool ParseBool(const std::string& tok) {
+    if (tok == "yes" || tok == "true" || tok == "1")
+        return true;
+    return false;
+}
+
 bool EditLine::read_file(const std::string& path)
 {
     std::ifstream infile(path, std::ios::binary);
@@ -2362,9 +2368,7 @@ bool EditLine::tok_bool(std::string delims)
     auto tk = tok(delims);
     // true: "yes", "true", "1"
     // false: "no", "false", "0"
-    if (tk == "yes" || tk == "true" || tk == "1")
-        return true;
-    return false;
+    return ParseBool(tk);
 }
 
 /// <summary>
@@ -3340,6 +3344,7 @@ void Combo::Click()
     ButtonPtr first_btn = nullptr;
     for (int i = 0; i < items.size(); i++) {
         ButtonPtr btn = menu->Create<Button>("COMBO_MENU_ITEM_" + std::to_string(i), {0, i, w, i});
+        btn->text_algn = text_algn;
         btn->setText(items[i]);
         btn->on_click = [&, i]() {
             SetValue(i);
@@ -3957,9 +3962,8 @@ void Edit::UpdateScrollMax()
 /// LabelEdit
 /// </summary>
 
-LabelEdit::LabelEdit(Mgr* mgr) : Edit(mgr)
+LabelEdit::LabelEdit(Mgr* mgr) : Label(mgr)
 {
-    is_scroll_y = false;
     draw_border = true;
     border_style = BorderStyle_None;
     bg_color_hover = COLOR_HOVER;
@@ -3968,67 +3972,26 @@ LabelEdit::LabelEdit(Mgr* mgr) : Edit(mgr)
 bool LabelEdit::ParseCmd(const std::string& cmd, EditLine& el)
 {
     bool ret = true;
-    if (eqi(cmd, "Label")) {
-        label = ParseText(el.tok_line());
-    }
-    else if (eqi(cmd, "LabelWidth")) {
+    if (eqi(cmd, "LabelWidth")) {
         label_width = el.tok_int();
     }
     else if (eqi(cmd, "ColorHover")) {
         bg_color_hover = Color::Parse(el.tok());
     }
-    else if (eqi(cmd, "ColorLabel")) {
-        fg_color_label = Color::Parse(el.tok());
-    }
-    else if (Edit::ParseCmd(cmd, el)) {
+    else if (Label::ParseCmd(cmd, el)) {
     }
     else {
         ret = false;
     }
     return ret;
 }
-void LabelEdit::CalRect(Win* parent)
-{
-    Edit::CalRect(parent);
-    clip.x += label_width;
-}
-void LabelEdit::PaintText(DrawBuffer& drawbuf)
-{
-    {
-        int tx = clip.x - label_width;
-        int ty = clip.y;
-        drawbuf.Text(label, { tx, ty }, fg_color_label);
-    }
-    drawbuf.PushClip(clip);
-    if (!text.empty()) {
-        int tx = clip.x - scroll_value.x;
-        int ty = clip.y - scroll_value.y;
-        drawbuf.Text({ tx, ty }, *this, fg_color);
-    }
-    if (mgr->notify_.get() == this) {
-        int cx = clip.x + cursor.x - scroll_value.x;
-        int cy = clip.y + cursor.y - scroll_value.y;
-        drawbuf.SetColor({ cx,cy }, COLOR_CURSOR, COLOR_CURSOR_BG);
-    }
-    drawbuf.PopClip();
-}
-void LabelEdit::PaintBorder(DrawBuffer& drawbuf)
-{
-    Color bg = bg_color;
-    if (mgr->hover_.get() == this) {
-        bg = bg_color_hover;
-    }
-    if (draw_border) {
-        drawbuf.Border({ screen.x + label_width, screen.y, screen.x2, screen.y2 }, bg, border_style, fg_color);
-    }
-}
 
 void LabelEdit::Copy(const Win* ob)
 {
-    Edit::Copy(ob);
+    Label::Copy(ob);
     const LabelEdit* other = dynamic_cast<const LabelEdit*>(ob);
-    label = other->label;
     label_width = other->label_width;
+    bg_color_hover = other->bg_color_hover;
 }
 
 WinPtr LabelEdit::Clone() const
@@ -4038,22 +4001,65 @@ WinPtr LabelEdit::Clone() const
     return WinPtr(ob);
 }
 
-void LabelEdit::Input(const std::string& _label, std::string& value, fn_edit onedit)
+void LabelEdit::SetValue(std::string& value)
 {
-    label = _label;
-    setText(value);
-    on_edit = [onedit, &value](Edit* edit, const std::string& text) {
+    switch (type) {
+    case Type_Label: {
+        auto label = std::dynamic_pointer_cast<Label>(control);
+        label->setText(value);
+    } break;
+    case Type_Button: {
+        auto btn = std::dynamic_pointer_cast<TUI::Button>(control);
+        btn->setText(value);
+    } break;
+    case Type_Edit: {
+        auto edit = std::dynamic_pointer_cast<Edit>(control);
+        edit->setText(value);
+    } break;
+    case Type_Check: {
+        auto chk = std::dynamic_pointer_cast<TUI::Check>(control);
+        chk->SetChecked(ParseBool(value));
+    } break;
+    case Type_Combo: {
+        auto combo = std::dynamic_pointer_cast<TUI::Combo>(control);
+        combo->SetValue(std::atoi(value.c_str()));        
+    } break;
+    }
+}
+
+void LabelEdit::Text(const std::string& _label, std::string& value)
+{
+    setText(_label);
+    LabelPtr label = Create<TUI::Label>(name + "<LABEL>", { label_width, 0, local.width() - 1, 0 });
+    label->setText(value);
+    type = Type_Label;
+    control = label;
+}
+
+void LabelEdit::Input(const std::string& _label, std::string& value, Edit::fn_edit onedit)
+{
+    setText(_label);
+    EditPtr edit = Create<TUI::Edit>(name + "<EDIT>", { label_width, 0, local.width() - 1, 0 });
+    edit->is_cloneable = false;
+    edit->is_scroll_y = false;
+    edit->setText(value);
+    edit->on_edit = [onedit, &value](Edit* edit, const std::string& text) {
         value = text;
         if (onedit) {
             onedit(edit, text);
         }
         };
+    type = Type_Edit;
+    control = edit;
 }
-void LabelEdit::Input(const std::string& _label, uint32_t& value, uint32_t step, fn_edit onedit)
+void LabelEdit::Input(const std::string& _label, uint32_t& value, uint32_t step, Edit::fn_edit onedit)
 {
-    label = _label;
-    setText(std::to_string(value));
-    on_edit = [onedit, &value](Edit* edit, const std::string& _text) {
+    setText(_label);
+    EditPtr edit = Create<TUI::Edit>(name + "<EDIT>", { label_width, 0, local.width() - 1, 0 });
+    edit->is_cloneable = false;
+    edit->is_scroll_y = false;
+    edit->setText(std::to_string(value));
+    edit->on_edit = [onedit, &value](Edit* edit, const std::string& _text) {
         try {
             value = std::stoi(_text);
         }
@@ -4062,37 +4068,40 @@ void LabelEdit::Input(const std::string& _label, uint32_t& value, uint32_t step,
             onedit(edit, _text);
         }
         };
-    int w = local.width() - label_width;
+    int w = local.width();
     ButtonPtr sub = Create<TUI::Button>(name + "-", { w - 6, 0, w - 4, 0 });
     sub->is_cloneable = false;
     sub->setText("-");
-    sub->on_click = [&, step]() {
+    sub->on_click = [&, step, edit]() {
         if (value >= step) {
             value -= step;
-            setText(std::to_string(value));
+            edit->setText(std::to_string(value));
         }
         };
     ButtonPtr add = Create<TUI::Button>(name + "+", { w - 3, 0, w - 1, 0 });
     add->is_cloneable = false;
     add->setText("+");
-    add->on_click = [&, step]() {
+    add->on_click = [&, step, edit]() {
         value += step;
-        setText(std::to_string(value));
+        edit->setText(std::to_string(value));
         };
+    type = Type_Edit;
+    control = edit;
 }
 void LabelEdit::Button(const std::string& _label, const std::string& value, fn_click onclick)
 {
-    label = _label;
-    ButtonPtr btn = Create<TUI::Button>(name + "<BUTTON>", { 0, 0, local.width() - label_width - 1, 0 });
+    setText(_label);
+    ButtonPtr btn = Create<TUI::Button>(name + "<BUTTON>", { label_width, 0, local.width() - 1, 0 });
     btn->setText(value);
     btn->is_cloneable = false;
     btn->on_click = onclick;
-    is_notifiable = false;
+    type = Type_Button;
+    control = btn;
 }
 void LabelEdit::Check(const std::string& _label, bool& value, const Check::CheckText& check_text, Check::fn_check oncheck)
 {
-    label = _label;
-    CheckPtr chk = Create<TUI::Check>(name + "<CHECK>", { 0, 0, local.width() - label_width - 1, 0 });
+    setText(_label);
+    CheckPtr chk = Create<TUI::Check>(name + "<CHECK>", { label_width, 0, local.width() - 1, 0 });
     chk->check_text = check_text;
     chk->is_cloneable = false;
     chk->SetChecked(value);
@@ -4102,13 +4111,14 @@ void LabelEdit::Check(const std::string& _label, bool& value, const Check::Check
             oncheck(value);
         }
         };
-    is_notifiable = false;
+    type = Type_Check;
+    control = chk;
 }
 
 void LabelEdit::Combo(const std::string& _label, int& value, const std::vector<std::string>& items, Combo::fn_selected onselect)
 {
-    label = _label;
-    ComboPtr cbo = Create<TUI::Combo>(name + "COMBO", {0, 0, local.width() - label_width - 1, 0});
+    setText(_label);
+    ComboPtr cbo = Create<TUI::Combo>(name + "COMBO", { label_width, 0, local.width() - 1, 0});
     cbo->items = items;
     cbo->SetValue(value);
     cbo->is_cloneable = false;
@@ -4118,7 +4128,8 @@ void LabelEdit::Combo(const std::string& _label, int& value, const std::vector<s
             onselect(_value);
         }
         };
-    is_notifiable = false;
+    type = Type_Combo;
+    control = cbo;
 }
 
 /// <summary>
@@ -5633,19 +5644,6 @@ EditPtr GetEdit(WinPtr ob, const std::string& text, Edit::fn_edit func, const ch
     EditPtr ed = std::dynamic_pointer_cast<Edit>(ob);
     if (find) {
         ed = ob->GetUI<Edit>(find);
-    }
-    if (!ed)
-        return ed;
-    ed->setText(text);
-    ed->on_edit = func;
-    return ed;
-}
-
-LabelEditPtr GetLabelEdit(WinPtr ob, const std::string& text, Edit::fn_edit func, const char* find)
-{
-    LabelEditPtr ed = std::dynamic_pointer_cast<LabelEdit>(ob);
-    if (find) {
-        ed = ob->GetUI<LabelEdit>(find);
     }
     if (!ed)
         return ed;
