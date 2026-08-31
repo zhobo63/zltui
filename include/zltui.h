@@ -520,6 +520,16 @@ struct Win
         AddChild(ptr);
         return std::dynamic_pointer_cast<T>(ptr);
     }
+    template<class T>
+    std::shared_ptr<T> Clone(const std::string& name, const std::string& new_name, const Rect& r = {}) {
+        WinPtr ptr = Clone(name);
+        if (!ptr)
+            return ptr;
+        ptr->name = new_name;
+        ptr->local = r;
+        AddChild(ptr);
+        return std::dynamic_pointer_cast<T>(ptr);
+    }
 
     std::string name = "";
     std::string title = "";
@@ -707,12 +717,12 @@ struct LabelEdit : Label
     WinPtr Clone() const override;
 
     void SetValue(const std::string& value);
-    void Text(const std::string& label, std::string& value, Label::fn_text ontext = nullptr);
-    void Input(const std::string& label, std::string& value, Edit::fn_edit onedit = nullptr);
-    void Input(const std::string& label, uint32_t& value, uint32_t step = 1, Edit::fn_edit onedit = nullptr);
-    void Button(const std::string& label, const std::string& value, fn_click onclick);
-    void Check(const std::string& label, bool& value, const Check::CheckText & check_text = {}, Check::fn_check oncheck = nullptr);
-    void Combo(const std::string& label, int& value, const std::vector<std::string>& items, Combo::fn_selected onselect = nullptr);
+    LabelPtr Text(const std::string& label, std::string& value, Label::fn_text ontext = nullptr);
+    EditPtr Input(const std::string& label, std::string& value, Edit::fn_edit onedit = nullptr);
+    EditPtr Input(const std::string& label, uint32_t& value, uint32_t step = 1, Edit::fn_edit onedit = nullptr);
+    ButtonPtr Button(const std::string& label, const std::string& value, fn_click onclick);
+    CheckPtr Check(const std::string& label, bool& value, const Check::CheckText & check_text = {}, Check::fn_check oncheck = nullptr);
+    ComboPtr Combo(const std::string& label, int& value, const std::vector<std::string>& items, Combo::fn_selected onselect = nullptr);
 
     enum Type_ {
         Type_None,
@@ -724,6 +734,7 @@ struct LabelEdit : Label
     };
 
     int label_width = 16;
+    Color fg_color_value = AnsiColor_White;
     Color bg_color_hover = COLOR_HOVER;
     Type_ type = Type_None;
     WinPtr control;
