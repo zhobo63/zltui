@@ -3101,6 +3101,9 @@ Point Label::GetTextSize() const
 void Label::setText(const std::string& _text)
 {
     Text::setText(_text, local.width());
+    if (on_text) {
+        on_text(_text);
+    }
     mgr->is_dirty = true;
     if (autosize_ != Autosize_None) {
         auto textSize = GetTextSize();
@@ -4001,7 +4004,7 @@ WinPtr LabelEdit::Clone() const
     return WinPtr(ob);
 }
 
-void LabelEdit::SetValue(std::string& value)
+void LabelEdit::SetValue(const std::string& value)
 {
     switch (type) {
     case Type_Label: {
@@ -4027,11 +4030,12 @@ void LabelEdit::SetValue(std::string& value)
     }
 }
 
-void LabelEdit::Text(const std::string& _label, std::string& value)
+void LabelEdit::Text(const std::string& _label, std::string& value, Label::fn_text ontext)
 {
     setText(_label);
     LabelPtr label = Create<TUI::Label>(name + "<LABEL>", { label_width, 0, local.width() - 1, 0 });
     label->setText(value);
+    label->on_text = ontext;
     type = Type_Label;
     control = label;
 }

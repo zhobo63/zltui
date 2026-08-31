@@ -576,6 +576,9 @@ struct Label : Win, Text
     WinPtr Clone() const override;
 
     Align_ text_algn = Align_Start;
+
+    using fn_text = std::function<void(const std::string &text)>;
+    fn_text on_text;
 };
 
 using LabelPtr = std::shared_ptr<Label>;
@@ -703,8 +706,8 @@ struct LabelEdit : Label
     void Copy(const Win* ob) override;
     WinPtr Clone() const override;
 
-    void SetValue(std::string& value);
-    void Text(const std::string& label, std::string& value);
+    void SetValue(const std::string& value);
+    void Text(const std::string& label, std::string& value, Label::fn_text ontext = nullptr);
     void Input(const std::string& label, std::string& value, Edit::fn_edit onedit = nullptr);
     void Input(const std::string& label, uint32_t& value, uint32_t step = 1, Edit::fn_edit onedit = nullptr);
     void Button(const std::string& label, const std::string& value, fn_click onclick);
