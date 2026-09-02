@@ -575,9 +575,9 @@ Point Text::left(int idx)
 }
 Point Text::right(int idx)
 {
-    if (idx < position.size()) {
+    if (idx < position.size() - 1) {
         idx++;
-        if (chars[idx].char_width == 0)
+        if (idx < chars.size() && chars[idx].char_width == 0)
             return right(idx);
     }
     return pos_of(idx);
@@ -1156,6 +1156,8 @@ void DrawBuffer::Border(const Rect& r, const Color& bgcolor, BorderStyle_ style,
 void DrawBuffer::ScrollBar(const Point& pos, int length, int offset, int content_length, bool vertical, const Color& track_color, const Color& thumb_color)
 {
     // Apply clip region
+    if (content_length == 0)
+        return;
     Rect clip = { 0,0,width_ - 1, height_ - 1 };
     if (!clips_.empty()) {
         clip = clip.intersect(clips_.back());
@@ -3463,32 +3465,32 @@ bool Slider::Event(const TUI::Event& ev)
 
     if (any_click) {
         if (is_scroll_y) {
-            if (is_hover_y) {
+            if (is_hover_y && scroll_max.y > 0) {
                 int click_offset = ev.y - clip.y;
-                int max_scroll = content_length.y - clip.height();
+                //int max_scroll = content_length.y - clip.height();
                 int thumb_size = std::max(1, clip.height() * clip.height() / content_length.y);
-                int thumb_pos = (int)((float)scroll_value.y / max_scroll * (clip.height() - thumb_size));
+                int thumb_pos = (int)((float)scroll_value.y / scroll_max.y * (clip.height() - thumb_size));
 
                 if (click_offset < thumb_pos) {
                     // Click above thumb — scroll up by one page
-                    scroll_value.y = std::max(0, scroll_value.y - clip.height());
+                    scroll_value.y = scroll_value.y - clip.height();
                 }
                 else if (click_offset >= thumb_pos + thumb_size) {
                     // Click below thumb — scroll down by one page
-                    scroll_value.y = std::min(scroll_max.y, scroll_value.y + clip.height());
+                    scroll_value.y = scroll_value.y + clip.height();
                 }
             }
         }
         if (is_scroll_x) {
-            if (is_hover_x) {
+            if (is_hover_x && scroll_max.x > 0) {
                 int click_offset = ev.x - clip.x;
-                int max_scroll = content_length.x - clip.width();
+                //int max_scroll = content_length.x - clip.width();
                 int thumb_size = std::max(1, clip.width() * clip.width() / content_length.x);
-                int thumb_pos = (int)((float)scroll_value.x / max_scroll * (clip.width() - thumb_size));
+                int thumb_pos = (int)((float)scroll_value.x / scroll_max.x * (clip.width() - thumb_size));
                 if (click_offset < thumb_pos) {
-                    scroll_value.x = std::max(0, scroll_value.x - clip.width());
+                    scroll_value.x = scroll_value.x - clip.width();
                 } else if (click_offset >= thumb_pos + thumb_size) {
-                    scroll_value.x = std::min(scroll_max.x, scroll_value.x + clip.width());
+                    scroll_value.x = scroll_value.x + clip.width();
                 }
             }
         }
@@ -3497,11 +3499,11 @@ bool Slider::Event(const TUI::Event& ev)
     switch (ev.vkey) {
     case VK_PRIOR:
         if (is_scroll_y)
-            scroll_value.y = std::max(0, scroll_value.y - clip.height());
+            scroll_value.y = scroll_value.y - clip.height();
         break;
     case VK_NEXT:
         if (is_scroll_y)
-            scroll_value.y = std::min(scroll_max.y, scroll_value.y + clip.height());
+            scroll_value.y = scroll_value.y + clip.height();
         break;
     default:
         break;
@@ -3560,10 +3562,8 @@ bool Slider::Event(const TUI::Event& ev)
         break;
     }
     if (old_scroll_value != scroll_value) {
-        if (scroll_value.x < 0) scroll_value.x = 0;
-        else if (scroll_value.x > scroll_max.x) scroll_value.x = scroll_max.x;
-        if (scroll_value.y < 0) scroll_value.y = 0;
-        else if (scroll_value.y > scroll_max.y) scroll_value.y = scroll_max.y;
+        scroll_value.x = std::clamp(scroll_value.x, 0, scroll_max.x);
+        scroll_value.y = std::clamp(scroll_value.y, 0, scroll_max.y);
         mgr->is_dirty = true;
         return true;
     }
@@ -3582,20 +3582,14 @@ void Slider::UpdateScrollMax()
             auto ch = child.back();
             content_length.y = std::max(content_length.y, ch->local.y2 + 1);
         }
-        if (content_length.y < local.height()) {
-            content_length.y = local.height();
-        }
-        scroll_max.y = std::max(0, content_length.y - local.height());
+        scroll_max.y = std::max(0, content_length.y - clip.height());
     }
     if (is_scroll_x) {
         if (child.size() > 0) {
             auto ch = child.back();
             content_length.x = std::max(content_length.x, ch->local.x2 + 1);
         }
-        if (content_length.x < local.width()) {
-            content_length.x = local.width();
-        }
-        scroll_max.x = std::max(0, content_length.x - local.width());
+        scroll_max.x = std::max(0, content_length.x - clip.width());
     }
 }
 
