@@ -1,5 +1,8 @@
 ﻿#include "unit_test.h"
 
+#define TEST_EXAMPLE 1
+
+#if TEST_EXAMPLE
 void test_example(UnitReport& parent)
 {
     UnitReport unit("example");
@@ -10,6 +13,7 @@ void test_example(UnitReport& parent)
 
     parent.report.push_back(unit);
 }
+#endif
 
 void main() {
 #ifdef _WIN32
@@ -20,10 +24,13 @@ void main() {
     SetConsoleOutputCP(65001);
 #endif
 
+
     UnitReport main("UnitTest");
 
     try {
-        //test_example(main);
+#if TEST_EXAMPLE        
+        test_example(main);
+#endif        
     }
     catch (const std::exception& e) {
         std::cerr << "Exception caught: " << e.what() << std::endl;

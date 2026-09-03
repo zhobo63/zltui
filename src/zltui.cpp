@@ -3972,7 +3972,7 @@ void Edit::UpdateScrollMax()
 
 LabelEdit::LabelEdit(Mgr* mgr) : Label(mgr)
 {
-    draw_border = true;
+    draw_border = false;
     border_style = BorderStyle_None;
 }
 
@@ -4057,6 +4057,8 @@ EditPtr LabelEdit::Input(const std::string& _label, std::string& value, Edit::fn
     edit->is_cloneable = false;
     edit->is_scroll_y = false;
     edit->fg_color = fg_color_value;
+    edit->draw_border = true;    
+    edit->border_style = BorderStyle_None;
     edit->setText(value);
     edit->on_edit = [onedit, &value](Edit* edit, const std::string& text) {
         value = text;
@@ -4075,6 +4077,8 @@ EditPtr LabelEdit::Input(const std::string& _label, uint32_t& value, uint32_t st
     edit->is_cloneable = false;
     edit->is_scroll_y = false;
     edit->fg_color = fg_color_value;
+    edit->draw_border = true;
+    edit->border_style = BorderStyle_None;
     edit->setText(std::to_string(value));
     edit->on_edit = [onedit, &value](Edit* edit, const std::string& _text) {
         try {
@@ -5420,6 +5424,177 @@ void SyntaxText(RichEdit* edit, const std::string& text, const std::string& file
         syntax = &Syntax::INI;
 
     SyntaxText(edit, text, *syntax);
+}
+
+/// <summary>
+/// DatePicker
+/// </summary>
+
+bool DatePicker::is_leap_year(int year)
+{
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
+
+int DatePicker::first_day_of_month(int year)
+{
+    int x1, x2, x3;
+    x1 = (year - 1) / 4;
+    x2 = (year - 1) / 100;
+    x3 = (year - 1) / 400;
+    return (year + x1 - x2 + x3) % 7;
+}
+
+int DatePicker::days_of_month(int year, int month)
+{
+    int days_of_month[12] = { 31,28,31,30,31,30,31,31,30,31,30,31 };
+    if (is_leap_year(year)) {
+        days_of_month[1] = 29;
+    }
+    return days_of_month[month - 1];
+}
+
+int DatePicker::first_day_of_month(int year, int month)
+{
+    int days_of_month[12] = { 31,28,31,30,31,30,31,31,30,31,30,31 };
+    if (is_leap_year(year)) {
+        days_of_month[1] = 29;
+    }
+    int days = first_day_of_month(year);
+    for (int i = 0; i < month - 1; i++) {
+        days += days_of_month[i];
+    }
+    return days % 7;
+}
+
+DatePicker::Date DatePicker::Today()
+{
+    std::tm tm_now{};
+    const std::time_t now = std::time(nullptr);
+    localtime_s(&tm_now, &now);
+    DatePicker::Date today;
+    today.year = static_cast<uint32_t>(tm_now.tm_year + 1900);
+    today.month = static_cast<uint32_t>(tm_now.tm_mon + 1);
+    today.day = static_cast<uint32_t>(tm_now.tm_mday);
+    return today;
+}
+
+DatePicker::DatePicker(Mgr* mgr) :Win(mgr) {
+    draw_border = true;
+    border_style = BorderStyle_Round;
+
+    ed_year = Create<Edit>("DATEPICKER.YEAR", { 4,0,8,0 });
+    ed_year->is_cloneable = false;
+    ed_year->is_scroll_y = false;
+    ed_year->setText("1974");
+    ed_year->on_edit = [this](Edit* edit, const std::string text) {
+        try {
+            int year = std::atoi(text.c_str());
+            if (year != date.year) {
+                date.year = year;
+                SetDate(date);
+            }
+        }
+        catch (...) {}
+        };
+    auto btn_year_sub = Create<Button>("DATEPICKER.YEAR.-", { 0,0,2,0 });
+    btn_year_sub->is_cloneable = false;
+    btn_year_sub->setText("-");
+    btn_year_sub->on_click = [this]() {
+        if (date.year > 0) {
+            date.year--;
+            SetDate(date);
+        }
+        };
+    auto btn_year_add = Create<Button>("DATEPICKER.YEAR.+", { 9,0,11,0 });
+    btn_year_add->is_cloneable = false;
+    btn_year_add->setText("+");
+    btn_year_add->on_click = [this]() {
+        date.year++;
+        SetDate(date);
+        };
+    ed_month= Create<Edit>("DATEPICKER.MONTH", { 18,0,20,0 });
+    ed_month->is_cloneable = false;
+    ed_month->is_scroll_y = false;
+    ed_month->setText("12");
+    ed_month->on_edit = [this](Edit *edit, const std::string text) {
+        try {
+            int month = std::atoi(text.c_str());
+            month = std::clamp(month, 1, 12);
+            if (month != date.month) {
+                date.month = month;
+                SetDate(date);
+            }
+        }
+        catch (...) {}
+        };
+    auto btn_month_sub = Create<Button>("DATEPICKER.MONTH.-", { 14,0,16,0 });
+    btn_month_sub->is_cloneable = false;
+    btn_month_sub->setText("-");
+    btn_month_sub->on_click = [this]() {
+        date.month--;
+        if (date.month <= 0) {
+            date.month = 12;
+            date.year--;
+        }
+        SetDate(date);
+        };
+    auto btn_month_add = Create<Button>("DATEPICKER.MONTH.+", { 21,0,23,0 });
+    btn_month_add->is_cloneable = false;
+    btn_month_add->setText("+");
+    btn_month_add->on_click = [this]() {
+        date.month++;
+        if (date.month > 12) {
+            date.month = 1;
+            date.year++;
+        }
+        SetDate(date);
+        };
+
+    auto lb_week = Create<Label>("DATEPICKER.WEEK", { 1,2,23,2 });
+    lb_week->is_cloneable = false;
+    lb_week->setText(u8" 一 二 三 四 五 六 日 ");
+
+    int x = 2;
+    int y = 3;
+    for (int i = 0; i < BTN_DAY_COUNT; i++) {
+        auto day = Create<Button>("DATEPICKER.DAY", { x, y, x + 1, y });
+        btn_day[i] = day;
+        day->is_cloneable = false;
+        day->setText(std::to_string(i + 1));
+        x += 3;
+        if (x > 20) {
+            x = 2;
+            y++;
+        }
+    }
+}
+
+void DatePicker::SetDate(const Date& _date)
+{
+    date = _date;
+    ed_year->setText(std::to_string(date.year));
+    ed_month->setText(std::to_string(date.month));
+    for (int i = 0; i < BTN_DAY_COUNT; i++) {
+        btn_day[i]->is_visible = false;
+        btn_day[i]->on_click = nullptr;
+    }
+    int first = first_day_of_month(date.year, date.month) - 1;
+    if (first < 0) first += 7;
+    int days = days_of_month(date.year, date.month);
+    for (int i = 0; i < days; i++) {
+        int idx = i + first;
+        btn_day[idx]->is_visible = true;
+        btn_day[idx]->setText(std::to_string(i + 1));
+        btn_day[idx]->on_click = [i, this]() {
+            if (on_selected) {
+                Date pick;
+                pick.year = date.year;
+                pick.month = date.month;
+                pick.day = i + 1;
+                on_selected(pick);
+            }
+            };
+    }
 }
 
 /// <summary>

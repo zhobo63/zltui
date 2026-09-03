@@ -6,6 +6,7 @@
 #include <string>
 #include <thread>
 #include <chrono>
+#include <ctime>
 #include <vector>
 #include "zltui.h"
 
@@ -276,6 +277,13 @@ if (edit != nullptr)
     themeCombo->Combo("Theme", theme, { "Ocean", "Forest", "Mono" });
     AddLabel(controls, mgr, "hint", { 2, 20, 70, 21 },
              "LabelEdit wraps Label + Edit + Button / Check / Combo.", kAmber);
+
+    auto datepicker = controls->Create<DatePicker>("datepicker", {55, 5, 80, 15});    
+    datepicker->SetDate(DatePicker::Today());
+    datepicker->on_selected = [&, status](const DatePicker::Date& date) {        
+        status->setText("Pick Date: " + std::to_string(date.year) + "-" + std::to_string(date.month) + "-" + std::to_string(date.day));
+        mgr.is_dirty = true;
+        };
 
     std::filesystem::path currentPath = std::filesystem::current_path();
     std::function<void()> populateFiles;

@@ -852,6 +852,41 @@ struct Syntax {
 void SyntaxText(RichEdit* edit, const std::string& text, Syntax syntax = Syntax::CPP);
 void SyntaxText(RichEdit* edit, const std::string& text, const std::string& filename);
 
+struct DatePicker : Win
+{
+    DatePicker(Mgr* mgr);
+
+    static bool is_leap_year(int year);
+    static int first_day_of_month(int year);
+    static int first_day_of_month(int year, int month);
+    static int days_of_month(int year, int month);
+    static const int BTN_DAY_COUNT = 42;
+
+    struct Date {
+        union {
+            struct {
+                uint32_t year : 12;
+                uint32_t month : 4;
+                uint32_t day : 5;
+            };
+            uint32_t date = 0;
+        };
+    };
+    static Date Today();
+
+    void SetDate(const Date& date = Today());
+
+    EditPtr ed_year;
+    EditPtr ed_month;
+    ButtonPtr btn_day[BTN_DAY_COUNT];
+    Date date;
+
+    using fn_selected = std::function<void(const Date& date)>;
+    fn_selected on_selected;
+};
+
+using DatePickerPtr = std::shared_ptr<DatePicker>;
+
 struct Mgr : Win
 {
     Mgr();
