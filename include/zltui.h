@@ -379,6 +379,7 @@ public:
 
     void EnableRawMode();
     void DisableRawMode();
+    void AlternateScreenBuffer(bool enable);
     Point GetSize();
     void Resize();
 

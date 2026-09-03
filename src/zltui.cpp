@@ -1743,6 +1743,7 @@ void Terminal::EnableRawMode()
         hIn, dwMode | ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_MOUSE_INPUT)) {
         vtSupported_ = true;
         dwMode |= ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_MOUSE_INPUT;
+        std::cout << "\033[?1003h\033[?1006h\033[?2004h";
     }
     else {
         // Fallback to legacy mouse input
@@ -1754,9 +1755,8 @@ void Terminal::EnableRawMode()
     SetConsoleCP(CP_UTF8);
     SetConsoleOutputCP(CP_UTF8);
 
-    std::cout << "\033[?1049h" << HIDE_CURSOR;
-
     if (!s_event_thread) {
+        AlternateScreenBuffer(true);
         s_running.store(true);
         s_event_thread = new std::thread([] {
             event_thread();
@@ -1772,8 +1772,8 @@ void Terminal::DisableRawMode()
         s_event_thread->join();
         delete s_event_thread;
         s_event_thread = nullptr;
+        AlternateScreenBuffer(false);
     }
-    std::cout << SHOW_CURSOR << "\033[?1049l";  // Disable alternate screen buffer
 
     if (vtSupported_) {
         // 1003l 停用「延伸滑鼠報表」模式
@@ -1787,6 +1787,16 @@ void Terminal::DisableRawMode()
     HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
     SetConsoleMode(hIn, originalInMode_ | ENABLE_EXTENDED_FLAGS);
     SetConsoleCP(originalInCP_);
+}
+
+void Terminal::AlternateScreenBuffer(bool enable)
+{
+    if (enable) {
+        std::cout << "\033[?1049h" << HIDE_CURSOR;
+    }
+    else {
+        std::cout << SHOW_CURSOR << "\033[?1049l";  // Disable alternate screen buffer
+    }
 }
 
 Point Terminal::GetSize()
@@ -3041,6 +3051,7 @@ void Win::SetVisible(bool visible)
 Label::Label(Mgr* mgr) :Win(mgr) {
     is_notifiable = false;
     fg_color = COLOR_LABEL;
+    bg_color = AnsiColor_None;
 }
 
 bool Label::ParseCmd(const std::string& cmd, EditLine& el)
@@ -4022,7 +4033,7 @@ void LabelEdit::SetValue(const std::string& value)
     } break;
     case Type_Combo: {
         auto combo = std::dynamic_pointer_cast<TUI::Combo>(control);
-        combo->SetValue(std::atoi(value.c_str()));        
+        combo->SetValue(std::atoi(value.c_str()));
     } break;
     }
 }
