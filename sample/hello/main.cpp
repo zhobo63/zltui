@@ -281,7 +281,7 @@ if (edit != nullptr)
     auto datepicker = controls->Create<DatePicker>("datepicker", {55, 5, 80, 15});    
     datepicker->SetDate(DatePicker::Today());
     datepicker->on_selected = [&, status](const DatePicker::Date& date) {        
-        status->setText("Pick Date: " + std::to_string(date.year) + "-" + std::to_string(date.month) + "-" + std::to_string(date.day));
+        status->setText("Pick Date: " + date.toString());
         mgr.is_dirty = true;
         };
 

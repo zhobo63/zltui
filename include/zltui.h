@@ -856,6 +856,10 @@ struct DatePicker : Win
 {
     DatePicker(Mgr* mgr);
 
+    /*
+    * has Border size 26x11 else 24x9
+    */
+
     static bool is_leap_year(int year);
     static int first_day_of_month(int year);
     static int first_day_of_month(int year, int month);
@@ -871,6 +875,7 @@ struct DatePicker : Win
             };
             uint32_t date = 0;
         };
+        std::string toString() const;
     };
     static Date Today();
 

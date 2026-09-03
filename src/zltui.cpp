@@ -5478,6 +5478,13 @@ DatePicker::Date DatePicker::Today()
     return today;
 }
 
+std::string DatePicker::Date::toString() const
+{
+    char buf[16];
+    snprintf(buf, 16, "%u-%02u-%02u", year, month, day);
+    return std::string(buf);
+}
+
 DatePicker::DatePicker(Mgr* mgr) :Win(mgr) {
     draw_border = true;
     border_style = BorderStyle_Round;
