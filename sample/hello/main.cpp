@@ -265,7 +265,7 @@ if (edit != nullptr)
     auto refreshEdit = controls->Create<LabelEdit>("refresh", { 2, 15, 50, 15 });
     refreshEdit->Input("Refresh sec", refresh, 5);
     auto action = controls->Create<LabelEdit>("action", { 2, 16, 50, 16 });
-    auto status = AddLabel(controls, mgr, "controlStatus", { 2, 19, 70, 19 },
+    auto status = AddLabel(controls, mgr, "controlStatus", { 2, 20, 70, 20 },
                            "Interact with the composite fields below.", kTeal);
     action->Button("Action", "Apply", [&, status]() {
         status->setText("Applied: " + name + " / refresh " + std::to_string(refresh) + "s");
@@ -275,10 +275,15 @@ if (edit != nullptr)
     enabledCheck->Check("Enabled", enabled, { "ON", "OFF" });
     auto themeCombo = controls->Create<LabelEdit>("theme", { 2, 18, 50, 18 });
     themeCombo->Combo("Theme", theme, { "Ocean", "Forest", "Mono" });
-    AddLabel(controls, mgr, "hint", { 2, 20, 70, 21 },
+
+    float drag_value = 1;
+    auto dragEdit = controls->Create<LabelEdit>("drag", {2, 19, 50, 19});
+    dragEdit->Drag("Drag", drag_value, 0.1f);
+
+    AddLabel(controls, mgr, "hint", { 2, 21, 70, 22 },
              "LabelEdit wraps Label + Edit + Button / Check / Combo.", kAmber);
 
-    auto datepicker = controls->Create<DatePicker>("datepicker", {55, 5, 80, 15});    
+    auto datepicker = controls->Create<DatePicker>("datepicker", {60, 2, 60, 2});
     datepicker->SetDate(DatePicker::Today());
     datepicker->on_selected = [&, status](const DatePicker::Date& date) {        
         status->setText("Pick Date: " + date.toString());

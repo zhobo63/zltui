@@ -4110,6 +4110,55 @@ EditPtr LabelEdit::Input(const std::string& _label, uint32_t& value, uint32_t st
     control = edit;
     return edit;
 }
+
+EditPtr LabelEdit::Drag(const std::string& label, float& value, float step, Edit::fn_edit onedit)
+{
+    setText(label);
+    EditPtr edit = Create<TUI::Edit>(name + "<EDIT>", { label_width, 0, local.width() - 1, 0 });
+    edit->is_cloneable = false;
+    edit->is_scroll_y = false;
+    edit->fg_color = fg_color_value;
+    edit->draw_border = true;
+    edit->border_style = BorderStyle_None;
+    edit->setText(std::to_string(value));
+    edit->on_edit = [onedit, &value](Edit* edit, const std::string& _text) {
+        try {
+            value = std::stof(_text);
+        }
+        catch (...) {}
+        if (onedit) {
+            onedit(edit, _text);
+        }
+        };
+    static Point first_pos;
+    static float first_value;
+    edit->on_key = [this, edit, step](const TUI::Event& ev) ->bool {
+        bool ret = false;
+        if (ev.type == EventType_Mouse) {
+            Point pt = { ev.x, ev.y };
+            if (is_drag) {
+                if (!ev.any_button_down()) {
+                    is_drag = false;
+                }
+                else {
+                    float ox = pt.x - first_pos.x;
+                    float value = first_value + ox * step;
+                    edit->setText(std::to_string(value));
+                }
+            }
+            else if (ev.any_button_down() && clip.inside(pt)) {
+                is_drag = true;
+                first_pos = pt;
+                first_value = std::stof(edit->text);
+            }           
+        }        
+        return ret;
+        };
+    type = Type_Edit;
+    control = edit;
+    return edit;
+}
+
 ButtonPtr LabelEdit::Button(const std::string& _label, const std::string& value, fn_click onclick)
 {
     setText(_label);
@@ -5481,7 +5530,7 @@ DatePicker::Date DatePicker::Today()
 std::string DatePicker::Date::toString() const
 {
     char buf[16];
-    snprintf(buf, 16, "%u-%02u-%02u", year, month, day);
+    snprintf(buf, 16, "%04u-%02u-%02u", year, month, day);
     return std::string(buf);
 }
 
@@ -5560,6 +5609,7 @@ DatePicker::DatePicker(Mgr* mgr) :Win(mgr) {
     auto lb_week = Create<Label>("DATEPICKER.WEEK", { 1,2,23,2 });
     lb_week->is_cloneable = false;
     lb_week->setText(u8" 一 二 三 四 五 六 日 ");
+    // " Mo Tu We Th Fr Sa Su "
 
     int x = 2;
     int y = 3;
@@ -5567,6 +5617,7 @@ DatePicker::DatePicker(Mgr* mgr) :Win(mgr) {
         auto day = Create<Button>("DATEPICKER.DAY", { x, y, x + 1, y });
         btn_day[i] = day;
         day->is_cloneable = false;
+        day->bg_color = AnsiColor_Unused;
         day->setText(std::to_string(i + 1));
         x += 3;
         if (x > 20) {
@@ -5602,6 +5653,22 @@ void DatePicker::SetDate(const Date& _date)
             }
             };
     }
+}
+
+void DatePicker::CalRect(Win* parent)
+{
+    int w = local.width();
+    int h = local.height();
+    int needw = 24, needh = 9;
+    if (draw_border && border_style != BorderStyle_None) {
+        needw = 26;
+        needh = 11;
+    }
+    if (w != needw || h != needh) {
+        local.x2 = local.x + needw - 1;
+        local.y2 = local.y + needh - 1;
+    }
+    Win::CalRect(parent);
 }
 
 /// <summary>

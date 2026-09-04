@@ -721,6 +721,7 @@ struct LabelEdit : Label
     LabelPtr Text(const std::string& label, std::string& value, Label::fn_text ontext = nullptr);
     EditPtr Input(const std::string& label, std::string& value, Edit::fn_edit onedit = nullptr);
     EditPtr Input(const std::string& label, uint32_t& value, uint32_t step = 1, Edit::fn_edit onedit = nullptr);
+    EditPtr Drag(const std::string& label, float& value, float step = 1, Edit::fn_edit onedit = nullptr);
     ButtonPtr Button(const std::string& label, const std::string& value, fn_click onclick);
     CheckPtr Check(const std::string& label, bool& value, const Check::CheckText & check_text = {}, Check::fn_check oncheck = nullptr);
     ComboPtr Combo(const std::string& label, int& value, const std::vector<std::string>& items, Combo::fn_selected onselect = nullptr);
@@ -737,6 +738,7 @@ struct LabelEdit : Label
     int label_width = 16;
     Color fg_color_value = AnsiColor_White;
     Color bg_color_hover = COLOR_HOVER;
+    bool is_drag = false;
     Type_ type = Type_None;
     WinPtr control;
 };
@@ -880,6 +882,7 @@ struct DatePicker : Win
     static Date Today();
 
     void SetDate(const Date& date = Today());
+    void CalRect(Win* parent) override;
 
     EditPtr ed_year;
     EditPtr ed_month;
