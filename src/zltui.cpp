@@ -4494,6 +4494,22 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
 
     //edit->setText("");
 
+    auto is_marker = [](const std::string& marker) {
+        return marker == "**" || marker == "__" ||
+               marker == "*" || marker == "_";
+    };
+
+    auto is_identifier_underscore = [](const std::string& input, size_t pos,
+                                        size_t length) {
+        auto is_word_char = [](char ch) {
+            return (ch >= 'a' && ch <= 'z') ||
+                   (ch >= 'A' && ch <= 'Z') ||
+                   (ch >= '0' && ch <= '9') || ch == '_';
+        };
+        return pos > 0 && pos + length < input.size() &&
+               is_word_char(input[pos - 1]) && is_word_char(input[pos + length]);
+    };
+
     auto append_inline = [&](const std::string& input, RichText::Style base_style) {
         std::string plain;
         RichText::Style run_style = base_style;
@@ -4503,11 +4519,6 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
                 edit->appendText(plain, run_style);
                 plain.clear();
             }
-        };
-
-        auto is_marker = [](const std::string& marker) {
-            return marker == "**" || marker == "__" ||
-                   marker == "*" || marker == "_";
         };
 
         auto has_closing_marker = [&](size_t start, const std::string& marker) {
@@ -4587,7 +4598,8 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
             if (marker.empty() && (input[i] == '*' || input[i] == '_'))
                 marker.assign(1, input[i]);
 
-            if (marker.empty()) {
+            if (marker.empty() ||
+                (marker[0] == '_' && is_identifier_underscore(input, i, marker.size()))) {
                 plain += input[i++];
                 continue;
             }
@@ -4689,18 +4701,9 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
 
     auto table_display_width = [&](const std::string& value) {
         std::string visible;
+        bool bold = false;
+        bool italic = false;
         for (size_t i = 0; i < value.size();) {
-            if (i + 1 < value.size() &&
-                ((value[i] == '*' && value[i + 1] == '*') ||
-                 (value[i] == '_' && value[i + 1] == '_'))) {
-                i += 2;
-                continue;
-            }
-            if (value[i] == '*' || value[i] == '_') {
-                ++i;
-                continue;
-            }
-
             const MarkdownStyle::Replacement* replacement = nullptr;
             for (const auto& candidate : markdown_style.replacements) {
                 if (!candidate.source.empty() &&
@@ -4712,10 +4715,39 @@ void Markdown(RichEdit* edit, const std::string& md, const MarkdownStyle& markdo
             if (replacement) {
                 visible += replacement->text;
                 i += replacement->source.size();
+                continue;
             }
-            else {
+
+            std::string marker;
+            if (i + 1 < value.size()) {
+                std::string two = value.substr(i, 2);
+                if (is_marker(two))
+                    marker = two;
+            }
+            if (marker.empty() && (value[i] == '*' || value[i] == '_'))
+                marker.assign(1, value[i]);
+
+            if (marker.empty() ||
+                (marker[0] == '_' && is_identifier_underscore(value, i, marker.size()))) {
                 visible += value[i++];
+                continue;
             }
+
+            bool is_bold = marker.size() == 2;
+            bool active = is_bold ? bold : italic;
+            bool has_closing = active ||
+                value.find(marker, i + marker.size()) != std::string::npos;
+            if (!has_closing) {
+                visible += marker;
+                i += marker.size();
+                continue;
+            }
+
+            if (is_bold)
+                bold = !bold;
+            else
+                italic = !italic;
+            i += marker.size();
         }
         return utf8_width(visible);
     };

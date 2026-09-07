@@ -260,6 +260,9 @@ blob:https://teams.microsoft.com/245bf7c5-0a00-466e-9977-a1ddfeadf53d
 | （ ） | fullwidth parens | U+FF08 U+FF09 |
 | ［ ］ | fullwidth brackets | U+FF3B U+FF3D |
 | ｛ ｝ | fullwidth braces | U+FF5B U+FF5D |
+| sq |  |  |
+| **sqlite_orm** |  |  |
+| sq_orm |  |  |
     
 ```cpp
 if (edit != nullptr) 
