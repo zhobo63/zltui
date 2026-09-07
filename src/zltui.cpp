@@ -429,10 +429,10 @@ int Text::char_at(int x, int y) const
 
 Point Text::pos_of(int idx) const
 {
-    if (idx >= 0 && idx < static_cast<int>(chars.size())) {
-        if (chars[idx].char_width == 0 && idx + 1 < position.size()) {
-            return position[idx + 1];
-        }
+    if (idx >= 0 && idx < static_cast<int>(position.size())) {
+        //if (chars[idx].char_width == 0 && idx + 1 < position.size()) {
+        //    return position[idx + 1];
+        //}
         return position[idx];
     }
     // Past end — compute position after last char on its line
@@ -459,8 +459,8 @@ int Text::cur_idx_of(const Point& cursor) const
 {
     int idx = 0;
     for (size_t i = 0; i < position.size(); i++) {
-        if (i<chars.size() && chars[i].char_width == 0)
-            continue;
+        //if (i<chars.size() && chars[i].char_width == 0)
+        //    continue;
         auto& pos = position[i];
         if (pos.y == cursor.y)
             idx = (int)i;
@@ -566,9 +566,10 @@ int Text::insert(int idx, const std::string value)
 Point Text::left(int idx)
 {
     if (idx > 0) {
+        auto p = position[idx];
         idx--;
-        if (chars[idx].char_width == 0) {
-            return left(idx);
+        while (idx > 0 && position[idx] == p) {
+            idx--;
         }
     }
     return pos_of(idx);
@@ -576,9 +577,11 @@ Point Text::left(int idx)
 Point Text::right(int idx)
 {
     if (idx < position.size() - 1) {
+        auto p = position[idx];
         idx++;
-        if (idx < chars.size() && chars[idx].char_width == 0)
-            return right(idx);
+        while (idx < position.size() && position[idx] == p) {
+            idx++;
+        }
     }
     return pos_of(idx);
 }
