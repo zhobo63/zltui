@@ -149,7 +149,7 @@ int main()
              "Rendering: ANSI colors, borders, UTF-8 width handling", kGreen);
 
     auto rich = RichEditPtr(new RichEdit(&mgr));
-    rich->local = { 2, 1, 72, 20 };
+    rich->local = { 2, 1, 80, 20 };
     rich->draw_border = false;
     auto normal = RichText::RichTextStyle(kInk);
     auto green = RichText::RichTextStyle(kGreen, AnsiColor_Unused, true);
@@ -203,6 +203,63 @@ blob:https://teams.microsoft.com/245bf7c5-0a00-466e-9977-a1ddfeadf53d
 | ☕ | hot beverage | U+2615 |
 | 🐍 | snake | U+1F40D |
 | 🧠 | brain | U+1F9E0 |
+
+## 特殊符號
+
+| Symbol | Name | Code point |
+|---|---|---|
+| © | copyright | U+00A9 |
+| ® | registered | U+00AE |
+| ™ | trademark | U+2122 |
+| § | section | U+00A7 |
+| ¶ | pilcrow | U+00B6 |
+| † | dagger | U+2020 |
+| ‡ | double dagger | U+2021 |
+| • | bullet | U+2022 |
+| … | ellipsis | U+2026 |
+| — | em dash | U+2014 |
+| – | en dash | U+2013 |
+| ‘ ’ | single quotes | U+2018 U+2019 |
+| “ ” | double quotes | U+201C U+201D |
+| « » | guillemets | U+00AB U+00BB |
+| ± | plus-minus | U+00B1 |
+| × | multiplication | U+00D7 |
+| ÷ | division | U+00F7 |
+| ≈ | almost equal | U+2248 |
+| ≠ | not equal | U+2260 |
+| ≤ ≥ | less/equal, greater/equal | U+2264 U+2265 |
+| ∞ | infinity | U+221E |
+| ∑ | summation | U+2211 |
+| ∫ | integral | U+222B |
+| √ | square root | U+221A |
+| π | pi | U+03C0 |
+| α β γ | greek letters | U+03B1 U+03B2 U+03B3 |
+| ° | degree | U+00B0 |
+| µ | micro | U+00B5 |
+| ¢ £ ¥ | currency | U+00A2 U+00A3 U+00A5 |
+| € | euro | U+20AC |
+| ↑ ↓ ← → | arrows | U+2191 U+2193 U+2190 U+2192 |
+| ⇐ ⇒ | logical arrows | U+21D0 U+21D2 |
+| ∴ ∵ | therefore, because | U+2234 U+2235 |
+| ☀ ☁ ☂ | weather | U+2600 U+2601 U+2602 |
+| ♠ ♣ ♥ ♦ | card suits | U+2660 U+2663 U+2665 U+2666 |
+| ♪ ♫ | music notes | U+266A U+266B |
+| ★ ☆ | star | U+2605 U+2606 |
+| ☑ ☒ | ballot boxes | U+2611 U+2612 |
+| ✔ ✖ | check, cross | U+2714 U+2716 |
+| ⌘ | command | U+2318 |
+| ⎋ | escape | U+238B |
+| ⌫ ⏎ | delete, enter | U+232B U+23CE |
+| ⌦ | form feed | U+2326 |
+| ␣ | space | U+2423 |
+| ␉ | tab | U+2409 |
+| ⌖ | position indicator | U+2316 |
+| ⌗ | home | U+2317 |
+| ⌘ | command | U+2318 |
+| ！ ？ | fullwidth ! ? | U+FF01 U+FF1F |
+| （ ） | fullwidth parens | U+FF08 U+FF09 |
+| ［ ］ | fullwidth brackets | U+FF3B U+FF3D |
+| ｛ ｝ | fullwidth braces | U+FF5B U+FF5D |
     
 ```cpp
 if (edit != nullptr) 

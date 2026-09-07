@@ -39,6 +39,12 @@ static int utf8_char_width(uint32_t cp) {
         (cp >= 0xE0100 && cp <= 0xE01EF)) {
         return 0;
     }
+    if ((cp >= 0x2600 && cp <= 0x2606) ||
+        (cp >= 0x2611 && cp <= 0x2612) ||
+        (cp >= 0x2660 && cp <= 0x266F) ||
+        (cp >= 0x2714 && cp <= 0x2716)) {
+        return 1;
+    }
 
     // CJK, Hangul, fullwidth forms, and other East Asian wide characters.
     if ((cp >= 0x1100 && cp <= 0x115F) ||   // Hangul Jamo
