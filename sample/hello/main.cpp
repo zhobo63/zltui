@@ -260,12 +260,25 @@ blob:https://teams.microsoft.com/245bf7c5-0a00-466e-9977-a1ddfeadf53d
 | （ ） | fullwidth parens | U+FF08 U+FF09 |
 | ［ ］ | fullwidth brackets | U+FF3B U+FF3D |
 | ｛ ｝ | fullwidth braces | U+FF5B U+FF5D |
-| sq |  |  |
-| **sqlite_orm** |  |  |
-| sq_orm |  |  |
-    
+
+## Markdown控制
+
+| 內容 | 預期顯示 |
+|---|---|
+| sq * tm | 保留 `*`，因為沒有配對的 closing marker |
+| *italic text* | 套用斜體 |
+| **bold text** | 套用粗體 |
+| _italic text_ | 套用斜體 |
+| __bold text__ | 套用粗體 |
+| **sqlite_orm** | `sqlite_orm` 為粗體；中間的 `_` 保留為一般文字 |
+| sq_orm | 保留 `_`，不套用斜體 |
+| sqlite_orm_context | 保留所有 `_`，不套用斜體 |
+| __init__ | 保留雙底線識別字，不套用粗體 |
+| value_ | 保留未配對的 `_` |
+| **未配對粗體 | 保留未配對的 `**` |
+
 ```cpp
-if (edit != nullptr) 
+if (edit != nullptr)
     TUI::Markdown(edit, markdown);
 ```
 )";
@@ -344,8 +357,8 @@ if (edit != nullptr)
              "LabelEdit wraps Label + Edit + Button / Check / Combo.", kAmber);
 
     auto datepicker = controls->Create<DatePicker>("datepicker", {60, 2, 60, 2});
-    datepicker->SetDate(DatePicker::Today());
-    datepicker->on_selected = [&, status](const DatePicker::Date& date) {        
+    datepicker->SetDate(Date::Today());
+    datepicker->on_selected = [&, status](const Date& date) {
         status->setText("Pick Date: " + date.toString());
         mgr.is_dirty = true;
         };

@@ -523,7 +523,10 @@ struct Win
     }
     template<class T>
     std::shared_ptr<T> Clone(const std::string& name, const std::string& new_name, const Rect& r = {}) {
-        WinPtr ptr = Clone(name);
+        WinPtr ob = GetUI(name);
+        if (!ob)
+            return ob;
+        WinPtr ptr = ob->Clone();
         if (!ptr)
             return ptr;
         ptr->name = new_name;
@@ -854,6 +857,19 @@ struct Syntax {
 void SyntaxText(RichEdit* edit, const std::string& text, Syntax syntax = Syntax::CPP);
 void SyntaxText(RichEdit* edit, const std::string& text, const std::string& filename);
 
+struct Date {
+    union {
+        struct {
+            uint32_t year : 12;
+            uint32_t month : 4;
+            uint32_t day : 5;
+        };
+        uint32_t date = 0;
+    };
+    std::string toString() const;
+    static Date Today();
+};
+
 struct DatePicker : Win
 {
     DatePicker(Mgr* mgr);
@@ -868,20 +884,7 @@ struct DatePicker : Win
     static int days_of_month(int year, int month);
     static const int BTN_DAY_COUNT = 42;
 
-    struct Date {
-        union {
-            struct {
-                uint32_t year : 12;
-                uint32_t month : 4;
-                uint32_t day : 5;
-            };
-            uint32_t date = 0;
-        };
-        std::string toString() const;
-    };
-    static Date Today();
-
-    void SetDate(const Date& date = Today());
+    void SetDate(const Date& date = Date::Today());
     void CalRect(Win* parent) override;
 
     EditPtr ed_year;

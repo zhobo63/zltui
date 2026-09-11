@@ -5556,19 +5556,23 @@ int DatePicker::first_day_of_month(int year, int month)
     return days % 7;
 }
 
-DatePicker::Date DatePicker::Today()
+Date Date::Today()
 {
     std::tm tm_now{};
     const std::time_t now = std::time(nullptr);
+#ifdef _WIN32
     localtime_s(&tm_now, &now);
-    DatePicker::Date today;
+#else
+    localtime_r(&now, &tm_now);
+#endif
+    Date today;
     today.year = static_cast<uint32_t>(tm_now.tm_year + 1900);
     today.month = static_cast<uint32_t>(tm_now.tm_mon + 1);
     today.day = static_cast<uint32_t>(tm_now.tm_mday);
     return today;
 }
 
-std::string DatePicker::Date::toString() const
+std::string Date::toString() const
 {
     char buf[16];
     snprintf(buf, 16, "%04u-%02u-%02u", year, month, day);
