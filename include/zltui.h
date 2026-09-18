@@ -480,6 +480,8 @@ enum Autosize_
     Autosize_TextWidth,
     Autosize_TextHeight,
     Autosize_TextSize,
+    Autosize_Width,
+    Autosize_Height,
 };
 
 Autosize_ ParseAutosize(const std::string& tok);
@@ -491,6 +493,7 @@ struct Win
     virtual bool Parse(EditLine& el);
     virtual bool ParseCmd(const std::string& cmd, EditLine& el);
     virtual void CalRect(Win* parent);
+    virtual void CalClip();
     virtual void Paint(DrawBuffer& drawbuf);
     virtual void PaintBorder(DrawBuffer& drawbuf);
     virtual void PaintChild(DrawBuffer& drawbuf);
@@ -585,6 +588,7 @@ struct Label : Win, Text
     void setText(const std::string& _text);
     void Copy(const Win* ob) override;
     WinPtr Clone() const override;
+    void OnSize() override;
 
     Align_ text_algn = Align_Start;
 
@@ -660,6 +664,7 @@ struct Slider : Win
 
     bool ParseCmd(const std::string& cmd, EditLine& el) override;
     void CalRect(Win* parent) override;
+    void CalClip() override;
     void Paint(DrawBuffer& drawbuf) override;
     bool IsSlider() const override { return (is_scroll_x || is_scroll_y); }
     bool Event(const TUI::Event& ev) override;

@@ -2500,6 +2500,8 @@ Autosize_ ParseAutosize(const std::string& tok)
     if (eqi(tok, "TextWidth"))    return Autosize_TextWidth;
     if (eqi(tok, "TextHeight"))   return Autosize_TextHeight;
     if (eqi(tok, "TextSize"))     return Autosize_TextSize;
+    if (eqi(tok, "Width"))    return Autosize_Width;
+    if (eqi(tok, "Height"))   return Autosize_Height;
     return Autosize_None;
 }
 
@@ -2705,7 +2707,14 @@ void Win::CalRect(Win* parent)
         local.y = local.y2 - (lh - 1);
     }
 
-    auto textSize = GetTextSize();
+    Point textSize = { 0,0 };
+    switch (autosize_) {
+    case Autosize_TextWidth:
+    case Autosize_TextHeight:
+    case Autosize_TextSize:
+        textSize = GetTextSize();
+        break;
+    }
 
     switch (autosize_) {
     case Autosize_None:
@@ -2720,20 +2729,26 @@ void Win::CalRect(Win* parent)
         local.x2 = local.x + textSize.x;
         local.y2 = local.y + textSize.y;
         break;
+    case Autosize_Width:
+        local.x2 = local.x;
+        for (auto ch : child) {
+            local.x2 = std::max(local.x2, ch->local.x2);
+        }
+        break;
+    case Autosize_Height:
+        local.y2 = local.y;
+        for (auto ch : child) {
+            local.y2 = std::max(local.y2, ch->local.y2);
+        }
+        break;
     }
     if (local.width() != lw || local.height() != lh) {
         OnSize();
-        mgr->is_dirty = true;
+        //mgr->is_dirty = true;
     }
 
     screen = local.move(pt.x, pt.y);
-    if (draw_border && border_style != BorderStyle_None) {
-        clip = screen.expand(-1, -1);
-    }
-    else {
-        clip = screen;
-    }
-
+    CalClip();
     if (arrange_.mode == Arrange_Item) {
         /*
         Items mode:
@@ -2874,11 +2889,12 @@ void Win::CalRect(Win* parent)
             for (auto ob : child) {
                 if (!ob->is_visible)
                     continue;
+                ob->CalRect(this);
                 int cw = ob->local.width();
                 int ch = ob->local.height();
 
                 // wrap if this item doesn't fit on the current row (except first in row)
-                if (cx + cw > lw && cx > 0) {
+                if (cx + cw - 1 > lw && cx > 0) {
                     cx = 0;
                     cy += maxh;
                     maxh = 0;
@@ -2903,10 +2919,11 @@ void Win::CalRect(Win* parent)
             for (auto ob : child) {
                 if (!ob->is_visible)
                     continue;
+                ob->CalRect(this);
                 int cw = ob->local.width();
                 int ch = ob->local.height();
 
-                if (cy + ch > lh && cy > 0) {
+                if (cy + ch - 1 > lh && cy > 0) {
                     cy = 0;
                     cx += maxw;
                     maxw = 0;
@@ -2921,6 +2938,16 @@ void Win::CalRect(Win* parent)
                 maxw = std::max(maxw, cw);
             }
         }
+    }
+}
+
+void Win::CalClip()
+{
+    if (draw_border && border_style != BorderStyle_None) {
+        clip = screen.expand(-1, -1);
+    }
+    else {
+        clip = screen;
     }
 }
 
@@ -3128,26 +3155,33 @@ void Label::setText(const std::string& _text)
     }
     mgr->is_dirty = true;
     if (autosize_ != Autosize_None) {
-        auto textSize = GetTextSize();
+        Point textSize;
         switch (autosize_) {
         case Autosize_TextWidth:
+            textSize = GetTextSize();
             if (local.x2 != local.x + textSize.x) {
                 local.x2 = local.x + textSize.x;
                 Text::setText(_text, local.width());
             }
             break;
         case Autosize_TextHeight:
-            local.y2 = local.y + textSize.y;
+            local.y2 = local.y + text_height;
             break;
         case Autosize_TextSize:
-            local.y2 = local.y + textSize.y;
+            textSize = GetTextSize();
             if (local.x2 != local.x + textSize.x) {
                 local.x2 = local.x + textSize.x;
                 Text::setText(_text, local.width());
             }
+            local.y2 = local.y + text_height;
             break;
         }
     }
+}
+
+void Label::OnSize()
+{
+    Text::setText(text, local.width());
 }
 
 void Label::Copy(const Win* ob)
@@ -3437,13 +3471,18 @@ void Slider::CalRect(Win* parent)
 {
     Win::CalRect(parent);
     content_length = { 0,0 };
+    UpdateScrollMax();
+}
+
+void Slider::CalClip()
+{
+    Win::CalClip();
     if (is_scroll_y) {
         clip.x2--;
     }
     if (is_scroll_x) {
         clip.y2--;
     }
-    UpdateScrollMax();
 }
 
 void Slider::Paint(DrawBuffer& drawbuf)
