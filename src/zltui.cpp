@@ -16,12 +16,11 @@
 #include <sys/ioctl.h>
 #endif
 
-#define USE_REMOTE_LOG 1
 #if USE_REMOTE_LOG
 #define REMOTE_LOG_IMPLEMENT
 #include <remote_log.h>
 #else
-#define LOG
+#define LOG(color, msg, ...)
 #endif
 
 #undef max
