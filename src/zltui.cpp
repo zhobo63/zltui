@@ -16,12 +16,7 @@
 #include <sys/ioctl.h>
 #endif
 
-#if USE_REMOTE_LOG
-#define REMOTE_LOG_IMPLEMENT
 #include <remote_log.h>
-#else
-#define LOG(color, msg, ...)
-#endif
 
 #undef max
 #undef min
@@ -1482,7 +1477,7 @@ bool Event::parse_sequence(uint32_t ch)
     }
 
     if (seq.size() > 16) {
-        LOG(::Color::RED, "parse_sequence %s", seq.c_str());
+        LOG(RemoteLog::Color::RED, "parse_sequence %s", seq.c_str());
         reset();
         return false;
     }
